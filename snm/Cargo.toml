@@ -1,0 +1,14 @@
+[package]
+name = "snm"
+version = "0.1.0"
+authors = ["Oleg Keri <ezhi99@gmail.com>"]
+build = "build.rs"
+
+[dependencies]
+dbus = "*"
+libc = "*"
+lazy_static = "*"
+serde = "0.8.23"
+regex = "1.0.0"
+serde_derive = "0.8.23"
+toml = { version = "0.2", default-features = false, features = ["serde"] }

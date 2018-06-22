@@ -1,0 +1,36 @@
+<?xml version="1.0" ?>
+<node name="/">
+  <interface name="com.github.okeri.snm">
+    <method name="connect">
+      <arg type="(usb)" direction="in" name="setting"/>
+    </method>
+    <method name="disconnect" />
+    <method name="get_state">
+      <arg type="(usbus)" direction="out" name="state"/>
+    </method>
+    <signal name="state_changed">
+      <arg type="(usbus)" name="state"/>
+    </signal>
+    <method name="get_networks">
+      <arg type="a(usbu)" direction="out" name="networks"/>
+    </method>
+    <signal name="network_list">
+      <arg type="a(usbu)" name="networks"/>
+    </signal>
+    <method name="get_props">
+      <arg type="s" direction="in" name="essid"/>
+      <arg type="s" direction="out" name="password"/>
+      <arg type="b" direction="out" name="auto"/>
+      <arg type="b" direction="out" name="encryption"/>
+    </method>
+    <method name="set_props">
+      <arg type="s" direction="in" name="essid"/>
+      <arg type="s" direction="in" name="password"/>
+      <arg type="b" direction="in" name="auto"/>
+      <arg type="b" direction="in" name="encryption"/>
+    </method>
+    <signal name="connect_status_changed">
+      <arg type="u" name="status"/>
+    </signal>
+  </interface>
+</node>
