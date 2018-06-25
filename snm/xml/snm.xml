@@ -20,13 +20,13 @@
     <method name="get_props">
       <arg type="s" direction="in" name="essid"/>
       <arg type="s" direction="out" name="password"/>
-      <arg type="b" direction="out" name="auto"/>
+      <arg type="b" direction="out" name="auto_connect"/>
       <arg type="b" direction="out" name="encryption"/>
     </method>
     <method name="set_props">
       <arg type="s" direction="in" name="essid"/>
       <arg type="s" direction="in" name="password"/>
-      <arg type="b" direction="in" name="auto"/>
+      <arg type="b" direction="in" name="auto_connect"/>
       <arg type="b" direction="in" name="encryption"/>
     </method>
     <signal name="connect_status_changed">
