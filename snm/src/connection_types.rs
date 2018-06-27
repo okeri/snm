@@ -73,6 +73,10 @@ impl KnownNetwork {
             ("".to_string(), false, self.auto)
         }
     }
+
+    pub fn default_dbus_tuple() -> (String, bool, bool) {
+        ("".to_string(), false, false)
+    }
 }
 
 pub type KnownNetworks = HashMap<String, KnownNetwork>;

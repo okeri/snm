@@ -11,31 +11,49 @@ const ASSOC_MAX_TRIES: usize = 12;
 
 pub type SignalMsgHandler = mpsc::Sender<SignalMsg>;
 
-
 #[derive(Clone)]
-pub struct Interfaces {
-    pub eth: String,
-    pub wlan: String,
+struct Interfaces {
+    eth: String,
+    wlan: String,
 }
 
 impl Interfaces {
-    pub fn new() -> Interfaces {
+    fn detect(&mut self) {
         use std::fs;
         use std::path::Path;
-        let mut result =  Interfaces{eth: "".to_string(), wlan: "".to_string()};
-        for entry in fs::read_dir(&Path::new("/sys/class/net")).expect("no sysfs entry") {
-            let entry = entry.unwrap().file_name();
-            let path = entry;
-            let iface = path.to_str().unwrap();
-            match iface.chars().next().unwrap() {
-                'e' => result.eth = iface.to_string(),
-                'w' => result.wlan = iface.to_string(),
-                _ => {
+        if self.eth.is_empty() || self.wlan.is_empty() {
+            for entry in fs::read_dir(&Path::new("/sys/class/net")).expect("no sysfs entry") {
+                let entry = entry.unwrap().file_name();
+                let path = entry;
+                let iface = path.to_str().unwrap();
+                match iface.chars().next().unwrap() {
+                    'e' => {
+                        if self.eth.is_empty() {
+                            println!("Detected ethernet interface: {}", iface);
+                        }
+                        self.eth = iface.to_string();
+                        support::run(&format!("ip l set {} up", self.eth), false);
+
+                    }
+                    'w' => {
+                        if self.wlan.is_empty() {
+                            println!("Detected wifi interface: {}", iface);
+                        }
+                        self.wlan = iface.to_string();
+                        support::run(&format!("ip l set {} up", self.wlan), false);
+
+                    }
+                    _ => {
+                    }
                 }
             }
         }
-        support::run(&format!("ip l set {} up", result.eth), false);
-        support::run(&format!("ip l set {} up", result.wlan), false);
+    }
+
+
+    fn new() -> Interfaces {
+        let mut result =  Interfaces{eth: "".to_string(), wlan: "".to_string()};
+        result.detect();
         result
     }
 
@@ -53,7 +71,7 @@ impl Interfaces {
 
 #[derive(Clone)]
 pub struct Connection {
-    ifaces: Interfaces,
+    ifaces: Arc<RwLock<Interfaces>>,
     tries: Arc<AtomicUsize>,
     current: Arc<RwLock<ConnectionInfo>>,
     wpa_config: Arc<Mutex<Option<String>>>,
@@ -171,7 +189,7 @@ impl Connection {
 
     pub fn new(handler: SignalMsgHandler) -> Self {
         Connection {
-            ifaces: Interfaces::new(),
+            ifaces: Arc::new(RwLock::new(Interfaces::new())),
             tries: Arc::new(AtomicUsize::new(0)),
             current: Arc::new(RwLock::new(ConnectionInfo::NotConnected)),
             wpa_config: Arc::new(Mutex::new(None)),
@@ -183,7 +201,7 @@ impl Connection {
     pub fn connect(&self, setting: ConnectionSetting) -> bool {
         self.tries.store(AUTH_MAX_TRIES, Ordering::SeqCst);
         let mut network = NetworkInfo::Ethernet;
-        let iface = self.ifaces.from_setting(&setting);
+        let iface = self.ifaces.read().unwrap().from_setting(&setting);
 
         let connection = self.current.read().unwrap().clone();
 
@@ -265,14 +283,17 @@ impl Connection {
 
     pub fn disconnect(&self) {
         self.tries.store(0, Ordering::SeqCst);
-        let disconnect_iface = | iface | {
-            support::run(&format!("dhcpcd -k {}", iface), false);
-            support::run(&format!("ip addr flush dev {}", iface), false);
-            support::run(&format!("wpa_cli -i {} -p /var/run/wpa terminate", iface), false);
-        };
+        if let Ok(ifaces) = self.ifaces.read() {
+            let disconnect_iface = | ref iface | {
+                support::run(&format!("dhcpcd -k {}", iface), false);
+                support::run(&format!("ip addr flush dev {}", iface), false);
+                support::run(&format!("wpa_cli -i {} -p /var/run/wpa terminate", iface), false);
+            };
 
-        disconnect_iface(&self.ifaces.eth);
-        disconnect_iface(&self.ifaces.wlan);
+            disconnect_iface(&ifaces.eth);
+            disconnect_iface(&ifaces.wlan);
+        }
+
         support::run("dhcpcd -x", false);
         if let Some(ref cfg_path) = *self.wpa_config.lock().unwrap() {
             use std::fs;
@@ -283,7 +304,14 @@ impl Connection {
     }
 
     pub fn auto_connect_possible(&self, known_networks: &KnownNetworks) -> Result<ConnectionSetting, bool> {
-        let eth_plugged_in = Connection::plugged_in(&self.ifaces.eth);
+        self.ifaces.write().unwrap().detect();
+        let mut eth_plugged_in = false;
+        let mut wifi_plugged_in = false;
+        if let Ok(ifaces) = self.ifaces.read() {
+            eth_plugged_in = Connection::plugged_in(&ifaces.eth);
+            wifi_plugged_in = Connection::plugged_in(&ifaces.wlan);
+        }
+
         let mut setting: Option<ConnectionSetting> = None;
         let mut do_disconnect = false;
 
@@ -323,7 +351,7 @@ impl Connection {
             ConnectionInfo::Wifi(_, _, _, _) => {
                 if eth_plugged_in {
                     setting = Some(ConnectionSetting::Ethernet);
-                } else if !Connection::plugged_in(&self.ifaces.wlan){
+                } else if !wifi_plugged_in {
                     do_disconnect = true;
                 }
             }
@@ -351,50 +379,53 @@ impl Connection {
     }
 
     pub fn scan(&self) {
-        support::run(&format!("ip l set {} up", self.ifaces.wlan), false);
-        let output = support::run(&format!("iwlist {} scan", self.ifaces.wlan), false);
         let mut networks = Vec::new();
+        if let Ok(ifaces) = self.ifaces.read() {
+            support::run(&format!("ip l set {} up", ifaces.wlan), false);
+            let output = support::run(&format!("iwlist {} scan", ifaces.wlan), false);
 
-        if Connection::plugged_in(&self.ifaces.eth) {
-            networks.push(NetworkInfo::Ethernet);
-        }
-
-        let mut quality: u32;
-        let mut essid: &str;
-        let mut enc: bool;
-        let mut channel: u32;
-
-        for chunk in output.split("Cell ") {
-            quality = 0;
-            channel = 0;
-            enc = true;
-            essid = "";
-            if let Some(ref caps) = parse(Parsers::NetworkChannel, chunk) {
-                channel = caps.get(1).unwrap().as_str().parse::<u32>().expect("should be a value");
+            if Connection::plugged_in(&ifaces.eth) {
+                networks.push(NetworkInfo::Ethernet);
             }
 
-            if let Some(ref caps) = parse(Parsers::NetworkQuality, chunk) {
-                quality = 100 * caps.get(1).unwrap().as_str().parse::<u32>().expect("should be a value") /
-                    caps.get(2).unwrap().as_str().parse::<u32>().expect("should be a value");
-            }
+            let mut quality: u32;
+            let mut essid: &str;
+            let mut enc: bool;
+            let mut channel: u32;
 
-            if let Some(ref caps) = parse(Parsers::NetworkEssid, chunk) {
-                essid = caps.get(1).unwrap().as_str();
-            }
-
-            if let Some(ref caps) = parse(Parsers::NetworkEnc, chunk) {
-                if caps.get(1).unwrap().as_str() == "off" {
-                    enc = false;
+            for chunk in output.split("Cell ") {
+                quality = 0;
+                channel = 0;
+                enc = true;
+                essid = "";
+                if let Some(ref caps) = parse(Parsers::NetworkChannel, chunk) {
+                    channel = caps.get(1).unwrap().as_str().parse::<u32>().expect("should be a value");
                 }
+
+                if let Some(ref caps) = parse(Parsers::NetworkQuality, chunk) {
+                    quality = 100 * caps.get(1).unwrap().as_str().parse::<u32>().expect("should be a value") /
+                        caps.get(2).unwrap().as_str().parse::<u32>().expect("should be a value");
+                }
+
+                if let Some(ref caps) = parse(Parsers::NetworkEssid, chunk) {
+                    essid = caps.get(1).unwrap().as_str();
+                }
+
+                if let Some(ref caps) = parse(Parsers::NetworkEnc, chunk) {
+                    if caps.get(1).unwrap().as_str() == "off" {
+                        enc = false;
+                    }
+                }
+
+                if !
+                    essid.is_empty() {
+                        Connection::add_wifi_network(
+                            &mut networks, NetworkInfo::Wifi(essid.to_string(), quality, enc, channel));
+                    }
             }
 
-            if essid.is_empty() {
-                Connection::add_wifi_network(
-                    &mut networks, NetworkInfo::Wifi(essid.to_string(), quality, enc, channel));
-            }
+            networks.as_mut_slice().sort();
         }
-
-        networks.as_mut_slice().sort();
         *self.networks.lock().unwrap() = networks.clone();
         self.signal.send(SignalMsg::NetworkList(networks)).unwrap();
     }

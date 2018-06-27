@@ -193,7 +193,7 @@ impl dbus_interface::ComGithubOkeriSnm for NetworkManager {
         if let Some(ref known) = self.known_networks.lock().unwrap().get(essid) {
             Ok(known.to_dbus_tuple())
         } else {
-            Err(MethodErr::failed(&"No properties for this network"))
+            Ok(KnownNetwork::default_dbus_tuple())
         }
     }
 
