@@ -1,0 +1,3 @@
+[D-BUS Service]
+Name=com.github.okeri.snm
+Exec=/usr/bin/snm

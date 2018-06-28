@@ -1,0 +1,6 @@
+snm/target/
+snm/src/dbus_interface.rs
+curses/CMakeFiles/
+curses/CMakeCache.txt
+curses/Makefile
+curses/cmake_install.cmake
