@@ -48,7 +48,6 @@ impl Interfaces {
         }
     }
 
-
     fn new() -> Interfaces {
         let mut result =  Interfaces{eth: "".to_string(), wlan: "".to_string()};
         result.detect();
@@ -293,11 +292,12 @@ impl Connection {
         }
 
         support::run("dhcpcd -x", false);
-        if let Some(ref cfg_path) = *self.wpa_config.lock().unwrap() {
+        if let Some(ref cfg_path) = *self.wpa_config.lock().expect("locking wpa_config failed") {
             use std::fs;
             use std::path::Path;
             fs::remove_file(Path::new(cfg_path)).unwrap();
         }
+        *self.wpa_config.lock().unwrap() = None;
         self.change_state(ConnectionInfo::NotConnected);
     }
 
