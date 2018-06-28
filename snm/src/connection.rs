@@ -21,30 +21,28 @@ impl Interfaces {
     fn detect(&mut self) {
         use std::fs;
         use std::path::Path;
-        if self.eth.is_empty() || self.wlan.is_empty() {
-            for entry in fs::read_dir(&Path::new("/sys/class/net")).expect("no sysfs entry") {
-                let entry = entry.unwrap().file_name();
-                let path = entry;
-                let iface = path.to_str().unwrap();
-                match iface.chars().next().unwrap() {
-                    'e' => {
-                        if self.eth.is_empty() {
-                            println!("Detected ethernet interface: {}", iface);
-                        }
-                        self.eth = iface.to_string();
-                        support::run(&format!("ip l set {} up", self.eth), false);
+        for entry in fs::read_dir(&Path::new("/sys/class/net")).expect("no sysfs entry") {
+            let entry = entry.unwrap().file_name();
+            let path = entry;
+            let iface = path.to_str().unwrap();
+            match iface.chars().next().unwrap() {
+                'e' => {
+                    if self.eth.is_empty() {
+                        println!("Detected ethernet interface: {}", iface);
+                    }
+                    self.eth = iface.to_string();
+                    support::run(&format!("ip l set {} up", self.eth), false);
 
+                }
+                'w' => {
+                    if self.wlan.is_empty() {
+                        println!("Detected wifi interface: {}", iface);
                     }
-                    'w' => {
-                        if self.wlan.is_empty() {
-                            println!("Detected wifi interface: {}", iface);
-                        }
-                        self.wlan = iface.to_string();
-                        support::run(&format!("ip l set {} up", self.wlan), false);
+                    self.wlan = iface.to_string();
+                    support::run(&format!("ip l set {} up", self.wlan), false);
 
-                    }
-                    _ => {
-                    }
+                }
+                _ => {
                 }
             }
         }
@@ -71,7 +69,7 @@ impl Interfaces {
 
 #[derive(Clone)]
 pub struct Connection {
-    ifaces: Arc<RwLock<Interfaces>>,
+    ifaces: Arc<Mutex<Interfaces>>,
     tries: Arc<AtomicUsize>,
     current: Arc<RwLock<ConnectionInfo>>,
     wpa_config: Arc<Mutex<Option<String>>>,
@@ -189,7 +187,7 @@ impl Connection {
 
     pub fn new(handler: SignalMsgHandler) -> Self {
         Connection {
-            ifaces: Arc::new(RwLock::new(Interfaces::new())),
+            ifaces: Arc::new(Mutex::new(Interfaces::new())),
             tries: Arc::new(AtomicUsize::new(0)),
             current: Arc::new(RwLock::new(ConnectionInfo::NotConnected)),
             wpa_config: Arc::new(Mutex::new(None)),
@@ -201,7 +199,7 @@ impl Connection {
     pub fn connect(&self, setting: ConnectionSetting) -> bool {
         self.tries.store(AUTH_MAX_TRIES, Ordering::SeqCst);
         let mut network = NetworkInfo::Ethernet;
-        let iface = self.ifaces.read().unwrap().from_setting(&setting);
+        let iface = self.ifaces.lock().unwrap().from_setting(&setting);
 
         let connection = self.current.read().unwrap().clone();
 
@@ -283,7 +281,7 @@ impl Connection {
 
     pub fn disconnect(&self) {
         self.tries.store(0, Ordering::SeqCst);
-        if let Ok(ifaces) = self.ifaces.read() {
+        if let Ok(ifaces) = self.ifaces.lock() {
             let disconnect_iface = | ref iface | {
                 support::run(&format!("dhcpcd -k {}", iface), false);
                 support::run(&format!("ip addr flush dev {}", iface), false);
@@ -304,10 +302,10 @@ impl Connection {
     }
 
     pub fn auto_connect_possible(&self, known_networks: &KnownNetworks) -> Result<ConnectionSetting, bool> {
-        self.ifaces.write().unwrap().detect();
         let mut eth_plugged_in = false;
         let mut wifi_plugged_in = false;
-        if let Ok(ifaces) = self.ifaces.read() {
+        if let Ok(mut ifaces) = self.ifaces.lock() {
+            ifaces.detect();
             eth_plugged_in = Connection::plugged_in(&ifaces.eth);
             wifi_plugged_in = Connection::plugged_in(&ifaces.wlan);
         }
@@ -380,7 +378,7 @@ impl Connection {
 
     pub fn scan(&self) {
         let mut networks = Vec::new();
-        if let Ok(ifaces) = self.ifaces.read() {
+        if let Ok(ifaces) = self.ifaces.lock() {
             support::run(&format!("ip l set {} up", ifaces.wlan), false);
             let output = support::run(&format!("iwlist {} scan", ifaces.wlan), false);
 

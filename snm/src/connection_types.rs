@@ -68,9 +68,9 @@ impl KnownNetwork {
 
     pub fn to_dbus_tuple(&self) -> (String, bool, bool) {
         if let Some(ref p) = self.password {
-            (p.to_string(), true, self.auto)
+            (p.to_string(), self.auto, true)
         } else {
-            ("".to_string(), false, self.auto)
+            ("".to_string(), self.auto, false)
         }
     }
 
