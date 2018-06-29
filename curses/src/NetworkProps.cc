@@ -57,7 +57,7 @@ class NetworkProps::Impl {
             control = Colors::Tagged;
         }
         mvwprintw(win_, 4, 2, "encrypted    [%c]",
-                  props_.password.has_value() ? 'X' : ' ');
+                  props_.password ? 'X' : ' ');
         control.release();
         if (sel_ == Fields::Password) {
             control = Colors::Tagged;
@@ -77,7 +77,7 @@ class NetworkProps::Impl {
     }
 
     void updateProps() {
-        if (!props_.password.has_value()) {
+        if (!props_.password) {
             set_field_buffer(fields_[0], 0, "");
             set_field_back(fields_[0], A_INVIS);
         } else {
@@ -94,7 +94,7 @@ class NetworkProps::Impl {
     bool pressed(int ch) {
         switch (ch) {
             case KEY_APPLY: case KEY_RIGHT:
-                if (props_.password.has_value()) {
+                if (props_.password) {
                     form_driver(form_, REQ_VALIDATION);
                     std::string password = field_buffer(fields_[0], 0);
                     password.erase(password.find_last_not_of(" \n") + 1);
@@ -121,7 +121,7 @@ class NetworkProps::Impl {
                         break;
 
                     case 1:
-                        if (props_.password.has_value()) {
+                        if (props_.password) {
                             props_.password = std::nullopt;
                         } else {
                             props_.password = "";
@@ -138,7 +138,7 @@ class NetworkProps::Impl {
             case KEY_DOWN:
                 if (sel_ == Fields::AutoConnect ||
                     (sel_ == Fields::Encryption &&
-                     props_.password.has_value())) {
+                     props_.password)) {
                     sel_ = static_cast<Fields>(static_cast<uint32_t>(sel_) + 1);
                     update();
                 }

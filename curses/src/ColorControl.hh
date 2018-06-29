@@ -23,7 +23,7 @@ class ColorControl {
     }
 
     ColorControl& operator=(Colors color) {
-        if (color_.has_value()) {
+        if (color_) {
             throw std::logic_error("Second assignment to non-mutable color");
         }
         color_ = color;
@@ -32,14 +32,14 @@ class ColorControl {
     }
 
     void release() {
-        if (color_.has_value()) {
+        if (color_) {
             wattroff(win_, COLOR_PAIR(color_.value()));
             color_ = std::nullopt;
         }
     }
 
     ~ColorControl() {
-        if (color_.has_value()) {
+        if (color_) {
             wattroff(win_, COLOR_PAIR(color_.value()));
         }
     }

@@ -18,7 +18,7 @@ void Window::setTop() {
 }
 
 ColorControl Window::colorControl(std::optional<Colors> clr) {
-    if (clr.has_value()) {
+    if (clr) {
         return ColorControl(win_, clr.value());
     }
     return ColorControl(win_);
