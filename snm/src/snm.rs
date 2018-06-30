@@ -46,6 +46,7 @@ impl NetworkManager {
             self.monitor = Some(thread::spawn(move || {
                 let scan_iter = NETWORK_SCAN_INTERVAL / NETWORK_CHECK_INTERVAL;
                 let mut iter = 0;
+                connection.acquire();
                 connection.scan();
                 while running.load(Ordering::SeqCst) {
                     let mut msg = Err(());
@@ -201,7 +202,12 @@ impl dbus_interface::ComGithubOkeriSnm for NetworkManager {
         let props = KnownNetwork::new(auto, encryption, password);
         let upd_props = props.clone();
         if let Ok(mut known_networks) = self.known_networks.lock() {
-            *known_networks.entry(essid.to_string()).or_insert(props) = upd_props;
+            if encryption || auto {
+                *known_networks.entry(essid.to_string()).or_insert(props) = upd_props;
+            } else {
+                known_networks.remove(essid);
+            }
+
             if config::write_networks(&known_networks) {
                 return Ok(())
             }

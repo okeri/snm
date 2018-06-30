@@ -278,6 +278,10 @@ impl Connection {
         false
     }
 
+    pub fn acquire(&self) {
+        // TODO: find already established connections
+    }
+
     pub fn disconnect(&self) {
         self.tries.store(0, Ordering::SeqCst);
         if let Ok(ifaces) = self.ifaces.lock() {
