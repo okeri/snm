@@ -24,6 +24,7 @@ class NetworkProps::Impl {
         form_ = new_form(fields_.data());
         set_form_win(form_, win_);
         set_current_field(form_, fields_[0]);
+
         int rows, cols;
         scale_form(form_, &rows, &cols);
         set_form_sub(form_, derwin(win_, rows, cols, 0, 0));
@@ -87,8 +88,8 @@ class NetworkProps::Impl {
         update();
     }
 
-    std::tuple<std::string, snm::ConnectionProps> get() {
-        return std::make_tuple(essid_, props_);
+    std::pair<std::string, snm::ConnectionProps> get() {
+        return std::make_pair(essid_, props_);
     }
 
     bool pressed(int ch) {
@@ -178,6 +179,6 @@ bool NetworkProps::pressed(int ch) {
     return pImpl_->pressed(ch);
 }
 
-std::tuple<std::string, snm::ConnectionProps> NetworkProps::get() {
+std::pair<std::string, snm::ConnectionProps> NetworkProps::get() {
     return pImpl_->get();
 }

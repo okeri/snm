@@ -51,9 +51,9 @@ void Gui::showProps(PropGetter getter) {
         windows_[cast(Display::Networks)].get());
     auto networkProps  = static_cast<NetworkProps*>(
         windows_[cast(Display::Props)].get());
-    auto net = networkDisplay->selectedNetwork();
 
-    if (net && net.value().state == snm::State::Wifi) {
+    if (auto net = networkDisplay->selectedNetwork();
+        net && net.value().state == snm::State::Wifi) {
         networkProps->assign(net.value().essid, getter(net.value().essid));
         display_ = Display::Props;
         networkProps->setTop();
@@ -63,8 +63,7 @@ void Gui::showProps(PropGetter getter) {
 void Gui::connect(Connector connector) {
     auto networkDisplay = static_cast<NetworkDisplay*>(
         windows_[cast(Display::Networks)].get());
-    auto net = networkDisplay->selectedNetwork();
-    if (net) {
+    if (auto net = networkDisplay->selectedNetwork(); net) {
         connector(snm::ConnectionId(net.value()));
     }
 }

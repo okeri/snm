@@ -27,16 +27,15 @@ int main(int argc, char *argv[]) {
     };
 
     auto storeProps = [&networkManager, &gui] () {
-        auto[essid, props] = gui.getProps();
+        auto [essid, props] = gui.getProps();
         networkManager.set_props(essid, props);
         gui.showNetworks();
     };
 
     DBusLoop loop;
     while (true) {
-        int ch = getch();
-        bool handled = gui.pressed(ch);
-        if (!handled) {
+        auto ch = getch();
+        if (auto handled = gui.pressed(ch); !handled) {
             switch (ch) {
                 case KEY_LEFT:
                     if (gui.display() == Gui::Display::Props) {

@@ -123,7 +123,7 @@ class snm_proxy: public DBus::InterfaceProxy {
         DBus::CallMessage call;
         DBus::MessageIter wi = call.writer();
         wi << essid;
-        wi << (props.password.has_value() ? props.password.value() : "");
+        wi << props.password.value_or("");
         wi << props.auto_connect;
         wi << props.password.has_value();
         call.member("set_props");
