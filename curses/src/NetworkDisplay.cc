@@ -68,7 +68,7 @@ void  NetworkDisplay::update() {
         selected_ = -1;
     }
 
-    top_ = std::clamp(selected_ - page_ / 2, 0, count - page_);
+    top_ = std::clamp(selected_ - page_ / 2, 0, std::max(count - page_, 0));
 
     werase(win_);
 
