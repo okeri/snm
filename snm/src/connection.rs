@@ -78,9 +78,9 @@ pub struct Connection {
 
 impl Connection {
     fn plugged_in(iface: &str) -> bool {
-        let filename = format!("/sys/class/net/{}/carrier", iface);
-        if let Ok(value) = support::read_file_value(&filename)  {
-            value == 1
+        let filename = format!("/sys/class/net/{}/operstate", iface);
+        if let Ok(value) = support::read_file(&filename)  {
+            value == "up"
         } else {
             false
         }
