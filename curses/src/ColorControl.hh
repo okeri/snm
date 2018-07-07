@@ -15,10 +15,12 @@ class ColorControl {
     WINDOW *win_;
 
   public:
-    explicit ColorControl(WINDOW* w) : win_(w) {
+    explicit ColorControl(WINDOW* w) noexcept
+            : win_(w) {
     }
 
-    ColorControl(WINDOW *w, Colors color): color_(color), win_(w) {
+    ColorControl(WINDOW *w, Colors color) noexcept
+            : color_(color), win_(w) {
         wattron(win_, COLOR_PAIR(color_.value()));
     }
 

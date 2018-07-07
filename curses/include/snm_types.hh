@@ -30,7 +30,7 @@ struct NetworkInfo {
     bool enc;
     uint32_t quality = 0;
 
-    NetworkInfo(State s, const std::string& id, bool e, uint32_t q) :
+    NetworkInfo(State s, const std::string& id, bool e, uint32_t q) noexcept :
             state(s), essid(id), enc(e), quality(q) {
     }
 
@@ -51,15 +51,15 @@ struct ConnectionId {
     std::string essid;
     bool enc;
 
-    ConnectionId() :
+    ConnectionId() noexcept :
             state(State::Ethernet), essid(""), enc(false) {
     }
 
-    ConnectionId(const std::string &id, bool e) :
+    ConnectionId(const std::string &id, bool e) noexcept :
             state(State::Wifi), essid(id), enc(e) {
     }
 
-    explicit ConnectionId(const NetworkInfo& info) :
+    explicit ConnectionId(const NetworkInfo& info) noexcept :
             state(info.state), essid(info.essid), enc(info.enc) {
     }
 };
@@ -68,7 +68,7 @@ struct ConnectionState: public NetworkInfo {
     std::string ip;
 
     ConnectionState(State s, const std::string& id, bool e, uint32_t q,
-                    const std::string& i) :
+                    const std::string& i) noexcept :
             NetworkInfo(s, id, e, q), ip(i) {
     }
 

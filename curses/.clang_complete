@@ -1,0 +1,4 @@
+-std=c++17
+-I/usr/include/dbus-c++-1 -DDBUS_API_SUBJECT_TO_CHANGE -I/usr/include/dbus-1.0 -I/usr/lib/dbus-1.0/include
+-I/home/okeri/proj/snm/curses/include/gen
+-I/home/okeri/proj/snm/curses/include
