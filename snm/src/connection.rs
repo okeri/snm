@@ -339,9 +339,11 @@ impl Connection {
                                         if *enc {
                                             setting = Some(ConnectionSetting::Wifi{essid: essid.to_string(),
                                                                                    password: pass.to_string()});
+                                            break;
                                         }
                                     } else if !enc {
                                         setting = Some(ConnectionSetting::OpenWifi{essid: essid.to_string()});
+                                        break;
                                     }
                                 }
                             }
