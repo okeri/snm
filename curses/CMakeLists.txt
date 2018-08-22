@@ -16,5 +16,5 @@ add_executable(snm-curses
   src/NetworkProps.cc
   src/DBusLoop.cc)
 
-target_link_libraries(snm-curses ${DBUS_LIBRARIES} -lncurses -lform -lpanel -lpthread)
+target_link_libraries(snm-curses ${DBUS_LIBRARIES} -lncursesw -lformw -lpanelw -lpthread)
 SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -pedantic")

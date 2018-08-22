@@ -44,7 +44,7 @@ NetworkDisplay::NetworkDisplay() :
     update();
 }
 
-void  NetworkDisplay::update() {
+void NetworkDisplay::update() {
     int count = networks_.size();
     int current = -1;
 
@@ -71,6 +71,15 @@ void  NetworkDisplay::update() {
     top_ = std::clamp(selected_ - page_ / 2, 0, std::max(count - page_, 0));
 
     werase(win_);
+    auto utf_chars = [](const char *input) {
+        unsigned result = 0;
+        for (auto c = input; *c; ++c) {
+            if ((*c & 0xc0) == 0x80) {
+                result++;
+            }
+        }
+        return result;
+    };
 
     box(win_, 0, 0);
     if (count != 0) {
@@ -89,12 +98,13 @@ void  NetworkDisplay::update() {
                 clr = Colors::Tagged;
             }
 
+            auto essid = i != current ? networks_[i].essid :
+                    currentConnectionInfo();
             mvwprintw(win_, i + 2 - top_, 1,
-                      "%s%5s %48s %10s     %3d%%", selected_ == i ? "> ":"  ",
+                      "%s%5s %*s %10s     %3d%%", selected_ == i ? "> ":"  ",
                       networks_[i].state == snm::State::Ethernet ?
                       "eth" : "wifi",
-                      i != current ? networks_[i].essid.c_str() :
-                      currentConnectionInfo().c_str(),
+                      48 + utf_chars(essid.c_str()), essid.c_str(),
                       networks_[i].enc ? "secured" : "open",
                       networks_[i].quality);
         }

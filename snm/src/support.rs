@@ -1,4 +1,4 @@
-use std::{str, fs, mem, ptr, io::{self, Read}, path::Path};
+use std::{str, fs, mem, ptr, io::{self, Read}, path::Path, collections::VecDeque};
 use std::process::Command;
 
 pub fn run(cmd: &str, err: bool) -> String {
@@ -21,7 +21,6 @@ pub fn mktemp() -> String {
     output[0..output.len() - 1].to_string()
 }
 
-
 pub fn read_file(filename: &str) -> Result<String, io::Error> {
     let file = fs::File::open(&filename);
     if file.is_err() {
@@ -32,15 +31,6 @@ pub fn read_file(filename: &str) -> Result<String, io::Error> {
         Ok(_) => {
             data.pop();
             Ok(data)
-        },
-        Err(e) => Err(e),
-    }
-}
-
-pub fn read_file_value(filename: &str) -> Result<u32, io::Error> {
-    match read_file(filename) {
-        Ok(strval) => {
-            Ok(strval.parse::<u32>().expect("should be a value"))
         },
         Err(e) => Err(e),
     }
@@ -63,4 +53,31 @@ pub fn write_file(filename: &Path, data: &str) -> bool {
     let dir = filename.parent().unwrap();
     fs::create_dir_all(&dir).unwrap();
     fs::write(filename, data).is_ok()
+}
+
+pub fn parse_essid(input: &str) -> Vec<u8> {
+    let mut queue : VecDeque<_> = String::from(input).chars().collect();
+    let mut result = vec![];
+    let mut bytes2 = String::with_capacity(2);
+    while let Some(c) = queue.pop_front() {
+        if c != '\\' {
+            result.push(c as u8);
+            continue;
+        }
+
+        match queue.pop_front() {
+            Some('t') => result.push(0x9),
+            Some('\'') => result.push(0x27),
+            Some('\"') => result.push(0x22),
+            Some('\\') => result.push(0x5c),
+            Some('x') => {
+                bytes2.push(queue.pop_front().expect("Ill-formed string"));
+                bytes2.push(queue.pop_front().expect("Ill-formed string"));
+                result.push(u8::from_str_radix(&bytes2, 16).ok().unwrap());
+                bytes2.clear();
+            }
+            _ => return result
+        };
+    }
+    result
 }

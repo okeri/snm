@@ -383,6 +383,7 @@ impl Connection {
     }
 
     pub fn scan(&self) {
+        use std::str;
         let mut networks = Vec::new();
         if let Ok(ifaces) = self.ifaces.lock() {
             support::run(&format!("ip l set {} up", ifaces.wlan), false);
@@ -393,7 +394,7 @@ impl Connection {
             }
 
             let mut quality: u32;
-            let mut essid: &str;
+            let mut essid: String;
             let mut enc: bool;
             let mut channel: u32;
 
@@ -401,7 +402,7 @@ impl Connection {
                 quality = 0;
                 channel = 0;
                 enc = true;
-                essid = "";
+                essid = "".to_string();
                 if let Some(ref caps) = parse(Parsers::NetworkChannel, chunk) {
                     channel = caps.get(1).unwrap().as_str().parse::<u32>().expect("should be a value");
                 }
@@ -412,7 +413,11 @@ impl Connection {
                 }
 
                 if let Some(ref caps) = parse(Parsers::NetworkEssid, chunk) {
-                    essid = caps.get(1).unwrap().as_str();
+                    let parsed = support::parse_essid(caps.get(1).unwrap().as_str());
+                    let decoded = str::from_utf8(&parsed);
+                    if let Ok(value) = decoded {
+                        essid = value.to_string();
+                    }
                 }
 
                 if let Some(ref caps) = parse(Parsers::NetworkEnc, chunk) {
@@ -421,10 +426,9 @@ impl Connection {
                     }
                 }
 
-                if !
-                    essid.is_empty() {
+                if !essid.is_empty() {
                         Connection::add_wifi_network(
-                            &mut networks, NetworkInfo::Wifi(essid.to_string(), quality, enc, channel));
+                            &mut networks, NetworkInfo::Wifi(essid, quality, enc, channel));
                     }
             }
 

@@ -1,8 +1,11 @@
 #include <snm.hh>
+#include <locale.h>
 #include "DBusLoop.hh"
 #include "Gui.hh"
 
 int main(int argc, char *argv[]) {
+    setlocale(LC_ALL, "");
+
     Gui gui;
     snm::NetworkManager networkManager(
         DBusLoop::connection(DBusLoop::Bus::System),
