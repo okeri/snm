@@ -154,11 +154,12 @@ impl Connection {
     }
 
     fn get_network(&self, essid: &str) -> Result<NetworkInfo, ()> {
-        for network in self.networks.lock().unwrap().iter() {
-            if let NetworkInfo::Wifi(ref net_essid, _, _, _) = network {
-                if essid == net_essid {
-                    return Ok(network.clone());
-                }
+        if let Ok(networks) = self.networks.lock() {
+            let result = networks.iter().find(
+                | network | if let NetworkInfo::Wifi(net_essid, _, _, _) = network {
+                    essid == net_essid} else {false});
+            if let Some(network) = result {
+                return Ok(network.clone());
             }
         }
         Err(())
@@ -352,10 +353,20 @@ impl Connection {
                 }
             }
 
-            ConnectionInfo::Wifi(_, _, _, _) => {
+            ConnectionInfo::Wifi(ref essid, _, _, _) => {
                 if eth_plugged_in {
                     setting = Some(ConnectionSetting::Ethernet);
                 } else if !wifi_plugged_in {
+                    if let Ok(mut networks) = self.networks.lock() {
+                        let result = networks.iter().position(
+                            |x| return if let NetworkInfo::Wifi(name, _, _, _) = x {
+                                name == essid
+                            } else {false});
+                        if let Some(index) = result {
+                            networks.remove(index);
+                            self.signal.send(SignalMsg::NetworkList(networks.clone())).unwrap();
+                        }
+                    }
                     do_disconnect = true;
                 }
             }
@@ -429,7 +440,7 @@ impl Connection {
                 if !essid.is_empty() {
                         Connection::add_wifi_network(
                             &mut networks, NetworkInfo::Wifi(essid, quality, enc, channel));
-                    }
+                }
             }
 
             networks.as_mut_slice().sort();
