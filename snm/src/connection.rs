@@ -257,7 +257,7 @@ impl Connection {
             }
         }
         self.signal.send(SignalMsg::ConnectStatusChanged(ConnectionStatus::GettingIP)).unwrap();
-        let output = support::run(&format!("dhcpcd -i {}", iface), true);
+        let output = support::run(&format!("dhcpcd -4 -i {}", iface), true);
         if let Some(ref caps) = parse(Parsers::Ip, &output) {
             let info = match setting {
                 ConnectionSetting::Ethernet => {
