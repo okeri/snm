@@ -150,7 +150,7 @@ impl Connection {
 
     fn change_state(&self, info: ConnectionInfo) {
         *self.current.write().unwrap() = info.clone();
-        self.signal.send(SignalMsg::StateChanged(info)).unwrap();
+        self.signal.send(SignalMsg::StateChanged(info)).ok();
     }
 
     fn get_network(&self, essid: &str) -> Result<NetworkInfo, ()> {
