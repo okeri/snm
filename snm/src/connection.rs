@@ -393,13 +393,23 @@ impl Connection {
         }
     }
 
+    fn dbm2perc(dbm: i32) -> u32 {
+        return if dbm  < -92 {
+            1
+        } else if dbm > -21 {
+            100
+        } else {
+            let x = dbm as f32;
+            ((-0.0154*x*x)-(0.3794*x)+98.182).round() as u32
+        }
+    }
+
     pub fn scan(&self) {
         use std::str;
         let mut networks = Vec::new();
         if let Ok(ifaces) = self.ifaces.lock() {
             support::run(&format!("ip l set {} up", ifaces.wlan), false);
-            let output = support::run(&format!("iwlist {} scan", ifaces.wlan), false);
-
+            let output = support::run(&format!("iw dev {} scan", ifaces.wlan), false);
             if Connection::plugged_in(&ifaces.eth) {
                 networks.push(NetworkInfo::Ethernet);
             }
@@ -408,8 +418,7 @@ impl Connection {
             let mut essid: String;
             let mut enc: bool;
             let mut channel: u32;
-
-            for chunk in output.split("Cell ") {
+            for chunk in output.split(&format!("(on {})", ifaces.wlan)) {
                 quality = 0;
                 channel = 0;
                 enc = true;
@@ -419,8 +428,7 @@ impl Connection {
                 }
 
                 if let Some(ref caps) = parse(Parsers::NetworkQuality, chunk) {
-                    quality = 100 * caps.get(1).unwrap().as_str().parse::<u32>().expect("should be a value") /
-                        caps.get(2).unwrap().as_str().parse::<u32>().expect("should be a value");
+                    quality = Connection::dbm2perc(caps.get(1).unwrap().as_str().parse::<i32>().expect("should be a value"));
                 }
 
                 if let Some(ref caps) = parse(Parsers::NetworkEssid, chunk) {
@@ -432,7 +440,7 @@ impl Connection {
                 }
 
                 if let Some(ref caps) = parse(Parsers::NetworkEnc, chunk) {
-                    if caps.get(1).unwrap().as_str() == "off" {
+                    if caps.get(1).unwrap().as_str().matches("Privacy").count() == 0 {
                         enc = false;
                     }
                 }
