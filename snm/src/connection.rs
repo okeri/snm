@@ -168,7 +168,7 @@ impl Connection {
     fn add_wifi_network(networks: &mut Vec<NetworkInfo>, new_network: NetworkInfo) {
         if let NetworkInfo::Wifi(ref new_essid, ref new_q,
                                  ref new_enc, ref new_channel) = new_network {
-            for mut network in networks.iter_mut() {
+            for network in networks.iter_mut() {
                 if let NetworkInfo::Wifi(ref mut essid, ref mut q,
                                          ref mut enc, ref mut channel) = network {
                     if essid == new_essid {
@@ -331,7 +331,7 @@ impl Connection {
                     self.signal.send(SignalMsg::NetworkList(networks.clone())).unwrap();
                     setting = Some(ConnectionSetting::Ethernet);
                 } else {
-                    let mut networks = self.networks.lock().unwrap();
+                    let networks = self.networks.lock().unwrap();
                     for n in networks.iter() {
                         if let NetworkInfo::Wifi(ref essid, _, enc, _) = n {
                             if let Some(ref known) = known_networks.get(essid) {

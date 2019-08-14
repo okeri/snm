@@ -5,20 +5,20 @@
 
 #include <dbus-c++/dbus.h>
 
-#include <functional>
-#include <vector>
-#include <string>
 #include "snm_types.hh"
+#include <functional>
+#include <string>
+#include <vector>
 
 namespace snm {
 
-class snm_proxy: public DBus::InterfaceProxy {
+class snm_proxy : public DBus::InterfaceProxy {
     // unmarshalers
     ConnectionState unmarshalConnectionState(DBus::MessageIter& ri) {
         DBus::Struct<uint32_t, std::string, bool, uint32_t, std::string> proxy;
         ri >> proxy;
-        return ConnectionState(static_cast<State>(proxy._1),
-                               proxy._2, proxy._3, proxy._4, proxy._5);
+        return ConnectionState(static_cast<State>(proxy._1), proxy._2, proxy._3,
+            proxy._4, proxy._5);
     }
 
     std::vector<NetworkInfo> unmarshalNetworks(DBus::MessageIter& ri) {
@@ -26,23 +26,23 @@ class snm_proxy: public DBus::InterfaceProxy {
         ri >> proxy;
         std::vector<NetworkInfo> result;
         for (const auto& item : proxy) {
-            result.emplace_back(static_cast<State>(item._1),
-                                item._2, item._3, item._4);
+            result.emplace_back(
+                static_cast<State>(item._1), item._2, item._3, item._4);
         }
         return result;
     }
 
     // signal stub
-    void state_changed_stub(const ::DBus::SignalMessage &sig) {
+    void state_changed_stub(const ::DBus::SignalMessage& sig) {
         ::DBus::MessageIter ri = sig.reader();
         stateChanged_(unmarshalConnectionState(ri));
     }
 
-    void network_list_stub(const ::DBus::SignalMessage &sig) {
+    void network_list_stub(const ::DBus::SignalMessage& sig) {
         ::DBus::MessageIter ri = sig.reader();
         networkList_(unmarshalNetworks(ri));
     }
-    void status_changed_stub(const ::DBus::SignalMessage &sig) {
+    void status_changed_stub(const ::DBus::SignalMessage& sig) {
         ::DBus::MessageIter ri = sig.reader();
         uint32_t status;
         ri >> status;
@@ -51,13 +51,14 @@ class snm_proxy: public DBus::InterfaceProxy {
 
   public:
     using StateChanged = std::function<void(ConnectionState&&)>;
-    using NetworkList = std::function<void(std::vector<NetworkInfo> &&)>;
+    using NetworkList = std::function<void(std::vector<NetworkInfo>&&)>;
     using ConnectionStatusChanged = std::function<void(ConnectionStatus)>;
 
     snm_proxy(StateChanged sc, ConnectionStatusChanged csc, NetworkList nl) :
-            DBus::InterfaceProxy("com.github.okeri.snm"),
-            stateChanged_(sc), connectionStatusChanged_(csc),
-            networkList_(nl) {
+        DBus::InterfaceProxy("com.github.okeri.snm"),
+        stateChanged_(sc),
+        connectionStatusChanged_(csc),
+        networkList_(nl) {
         connect_signal(snm_proxy, state_changed, state_changed_stub);
         connect_signal(snm_proxy, network_list, network_list_stub);
         connect_signal(snm_proxy, connect_status_changed, status_changed_stub);
@@ -65,9 +66,9 @@ class snm_proxy: public DBus::InterfaceProxy {
 
     // methods
     void connect(ConnectionId setting) {
-        DBus::Struct< uint32_t, std::string, bool> proxy {
-            static_cast<unsigned int>(setting.state),
-                    setting.essid, setting.enc};
+        DBus::Struct<uint32_t, std::string, bool> proxy{
+            static_cast<unsigned int>(setting.state), setting.essid,
+            setting.enc};
         DBus::CallMessage call;
         DBus::MessageIter wi = call.writer();
 
@@ -98,7 +99,7 @@ class snm_proxy: public DBus::InterfaceProxy {
         return unmarshalNetworks(ri);
     }
 
-    ConnectionProps get_props(const std::string &essid) {
+    ConnectionProps get_props(const std::string& essid) {
         DBus::CallMessage call;
         DBus::MessageIter wi = call.writer();
 
@@ -119,7 +120,15 @@ class snm_proxy: public DBus::InterfaceProxy {
         return result;
     }
 
-    void set_props(const std::string& essid, const ConnectionProps &props) {
+    void monitor(bool active) {
+        DBus::CallMessage call;
+        DBus::MessageIter wi = call.writer();
+        wi << active;
+        call.member("monitor");
+        invoke_method_noreply(call);
+    }
+
+    void set_props(const std::string& essid, const ConnectionProps& props) {
         DBus::CallMessage call;
         DBus::MessageIter wi = call.writer();
         wi << essid;

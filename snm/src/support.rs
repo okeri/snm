@@ -37,7 +37,6 @@ pub fn read_file(filename: &str) -> Result<String, io::Error> {
 }
 
 pub fn signal(signal: i32, action: fn(i32)) {
-    use libc;
     unsafe {
         let mut sigset = mem::uninitialized();
         if libc::sigfillset(&mut sigset) != -1 {

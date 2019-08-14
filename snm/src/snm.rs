@@ -1,5 +1,5 @@
 use dbus::tree::{DataType, MethodErr};
-use std::{sync::{Arc, mpsc, Mutex, atomic::{AtomicBool, Ordering}}, thread, time, fmt};
+use std::{sync::{Arc, mpsc, Mutex, atomic::{AtomicBool, AtomicU32, Ordering}}, thread, time, fmt};
 use connection_types::{*};
 use network_info::NetworkInfo;
 use connection::Connection;
@@ -13,90 +13,87 @@ const NETWORK_SCAN_INTERVAL: u64 = 14;
 pub struct NetworkManager {
     connection: Connection,
     auto_connect: Arc<AtomicBool>,
+    client_count: Arc<AtomicU32>,
     running: Arc<AtomicBool>,
     monitor: Option<thread::JoinHandle<()>>,
     known_networks: Arc<Mutex<KnownNetworks>>,
-    sender: Option<mpsc::Sender<ConnectionSetting>>,
+    sender: mpsc::Sender<ConnectionSetting>,
 }
 
 impl NetworkManager {
+    fn create_monitor(&self, receiver: mpsc::Receiver<ConnectionSetting>) -> Option<thread::JoinHandle<()>> {
+        let auto = self.auto_connect.clone();
+        let client_count = self.client_count.clone();
+        let running = self.running.clone();
+        let connection = self.connection.clone();
+        let known_networks = self.known_networks.clone();
+
+        Some(thread::spawn(move || {
+            let scan_iter = NETWORK_SCAN_INTERVAL / NETWORK_CHECK_INTERVAL;
+            let mut iter = 0;
+            connection.acquire();
+            connection.scan();
+            while running.load(Ordering::SeqCst) {
+                let mut msg = Err(());
+                loop {
+                    let r = receiver.try_recv();
+                    if r.is_err() { break }
+                    msg = Ok(r.unwrap());
+                }
+
+                if let Ok(setting) = msg {
+                    if connection.connect(setting) {
+                        auto.store(true, Ordering::SeqCst);
+                    } else {
+                        connection.disconnect();
+                    }
+                } else {
+                    if auto.load(Ordering::SeqCst) {
+                        let result = connection.auto_connect_possible(
+                            &known_networks.lock().unwrap());
+                        match result {
+                            Ok(setting) => {
+                                if connection.connect(setting) {
+                                    auto.store(true, Ordering::SeqCst);
+                                } else {
+                                    connection.disconnect();
+                                }
+                            }
+                            Err(do_disconnect) => {
+                                if do_disconnect {
+                                    connection.disconnect();
+                                    connection.scan();
+                                    iter = 0;
+                                } 
+                            }
+                        }
+                    }
+                    if client_count.load(Ordering::SeqCst) > 0 &&
+                        iter >= scan_iter {
+                        connection.scan();
+                        iter = 0;
+                    } else {
+                        iter += 1;
+                    }
+                }
+                thread::sleep(time::Duration::from_secs(NETWORK_CHECK_INTERVAL));
+            }
+        }))
+    }
+    
     pub fn new(sender: mpsc::Sender<SignalMsg>) -> Self {
+        let (connection_sender, receiver) = mpsc::channel::<ConnectionSetting>();
         let mut this = NetworkManager {
             connection: Connection::new(sender),
             auto_connect: Arc::new(AtomicBool::new(true)),
-            running: Arc::new(AtomicBool::new(false)),
+            client_count: Arc::new(AtomicU32::new(0)),
+            running: Arc::new(AtomicBool::new(true)),
             monitor: None,
             known_networks: Arc::new(Mutex::new(config::read_networks())),
-            sender: None,
+            sender: connection_sender,
         };
-        this.enable(true);
+        this.monitor = this.create_monitor(receiver);
         this
-    }
-
-    fn enable(&mut self, active: bool) {
-        if active {
-            self.running.store(true, Ordering::SeqCst);
-            let running = self.running.clone();
-            let auto = self.auto_connect.clone();
-            let connection = self.connection.clone();
-            let known_networks = self.known_networks.clone();
-            let (sender, receiver) = mpsc::channel::<ConnectionSetting>();
-            self.sender = Some(sender);
-
-            self.monitor = Some(thread::spawn(move || {
-                let scan_iter = NETWORK_SCAN_INTERVAL / NETWORK_CHECK_INTERVAL;
-                let mut iter = 0;
-                connection.acquire();
-                connection.scan();
-                while running.load(Ordering::SeqCst) {
-                    let mut msg = Err(());
-                    loop {
-                        let r = receiver.try_recv();
-                        if r.is_err() { break }
-                        msg = Ok(r.unwrap());
-                    }
-
-                    if let Ok(setting) = msg {
-                        if connection.connect(setting) {
-                            auto.store(true, Ordering::SeqCst);
-                        } else {
-                            connection.disconnect();
-                        }
-                    } else {
-                        if auto.load(Ordering::SeqCst) {
-                            let result = connection.auto_connect_possible(
-                                &known_networks.lock().unwrap());
-                            match result {
-                                Ok(setting) => {
-                                    if connection.connect(setting) {
-                                        auto.store(true, Ordering::SeqCst);
-                                    } else {
-                                        connection.disconnect();
-                                    }
-                                }
-                                Err(do_disconnect) => {
-                                    if do_disconnect {
-                                        connection.disconnect();
-                                    }
-                                }
-                            }
-                        }
-                        if iter == scan_iter {
-                            connection.scan();
-                            iter = 0;
-                        } else {
-                            iter += 1;
-                        }
-                    }
-
-                    thread::sleep(time::Duration::from_secs(NETWORK_CHECK_INTERVAL));
-                }
-            }));
-
-        } else if self.running.load(Ordering::SeqCst) {
-            self.running.store(false, Ordering::SeqCst);
-            self.monitor.take().unwrap().join().unwrap_or(());
-        }
     }
 
     fn get_password(&self, essid: &str) -> Result<String, ()> {
@@ -142,9 +139,7 @@ impl dbus_interface::ComGithubOkeriSnm for NetworkManager {
             }
         };
 
-        if let Some(ref sender) = self.sender {
-            sender.send(connection_setting).unwrap();
-        }
+        self.sender.send(connection_setting).unwrap();
         Ok(())
     }
 
@@ -190,6 +185,15 @@ impl dbus_interface::ComGithubOkeriSnm for NetworkManager {
         Ok(result)
     }
 
+    fn monitor(&self, active: bool) -> Result<(), Self::Err> {
+        if active {
+            self.client_count.fetch_add(1, Ordering::SeqCst);
+        } else {
+            self.client_count.fetch_sub(1, Ordering::SeqCst);
+        }
+        Ok(())
+    }
+    
     fn get_props(&self, essid: &str) -> Result<(String, bool, bool), Self::Err> {
         if let Some(ref known) = self.known_networks.lock().unwrap().get(essid) {
             Ok(known.to_dbus_tuple())
@@ -225,7 +229,8 @@ impl fmt::Debug for NetworkManager {
 impl Drop for NetworkManager {
     fn drop(&mut self) {
         if self.running.load(Ordering::SeqCst) {
-            self.enable(false);
+            self.running.store(false, Ordering::SeqCst);
+            self.monitor.take().unwrap().join().unwrap_or(());
         }
     }
 }
