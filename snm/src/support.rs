@@ -1,5 +1,12 @@
-use std::{str, fs, mem, ptr, io::{self, Read}, path::Path, collections::VecDeque};
 use std::process::Command;
+use std::{
+    collections::VecDeque,
+    fs,
+    io::{self, Read},
+    mem,
+    path::Path,
+    ptr, str,
+};
 
 pub fn run(cmd: &str, err: bool) -> String {
     let output = Command::new("sh")
@@ -8,10 +15,12 @@ pub fn run(cmd: &str, err: bool) -> String {
         .output()
         .expect("failed to execute command");
     if err {
-        str::from_utf8(&output.stderr).expect("process returned bad output")
+        str::from_utf8(&output.stderr)
+            .expect("process returned bad output")
             .to_string()
     } else {
-        str::from_utf8(&output.stdout).expect("process returned bad output")
+        str::from_utf8(&output.stdout)
+            .expect("process returned bad output")
             .to_string()
     }
 }
@@ -31,7 +40,7 @@ pub fn read_file(filename: &str) -> Result<String, io::Error> {
         Ok(_) => {
             data.pop();
             Ok(data)
-        },
+        }
         Err(e) => Err(e),
     }
 }
@@ -55,7 +64,7 @@ pub fn write_file(filename: &Path, data: &str) -> bool {
 }
 
 pub fn parse_essid(input: &str) -> Vec<u8> {
-    let mut queue : VecDeque<_> = String::from(input).chars().collect();
+    let mut queue: VecDeque<_> = String::from(input).chars().collect();
     let mut result = vec![];
     let mut bytes2 = String::with_capacity(2);
     while let Some(c) = queue.pop_front() {
@@ -75,7 +84,7 @@ pub fn parse_essid(input: &str) -> Vec<u8> {
                 result.push(u8::from_str_radix(&bytes2, 16).ok().unwrap());
                 bytes2.clear();
             }
-            _ => return result
+            _ => return result,
         };
     }
     result

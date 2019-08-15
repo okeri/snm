@@ -3,7 +3,7 @@ use std::cmp::{Ord, Ordering};
 #[derive(Eq, Clone)]
 pub enum NetworkInfo {
     Ethernet,
-    Wifi (String, u32, bool, u32),
+    Wifi(String, u32, bool, u32),
 }
 
 impl Ord for NetworkInfo {
@@ -29,7 +29,7 @@ impl PartialEq for NetworkInfo {
     fn eq(&self, other: &NetworkInfo) -> bool {
         if let NetworkInfo::Wifi(ref essid1, _, _, _) = *self {
             if let NetworkInfo::Wifi(ref essid2, _, _, _) = other {
-                return essid1 == essid2
+                return essid1 == essid2;
             }
         }
         false

@@ -1,9 +1,12 @@
-use std::sync::{Arc, RwLock, Mutex, atomic::{AtomicUsize, Ordering}, mpsc};
-use std::{thread, time};
-use connection_types::{*};
-use parsers::{Parsers, parse};
+use connection_types::*;
 use network_info::NetworkInfo;
+use parsers::{parse, Parsers};
 use signalmsg::SignalMsg;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    mpsc, Arc, Mutex, RwLock,
+};
+use std::{thread, time};
 use support;
 
 const AUTH_MAX_TRIES: usize = 30;
@@ -17,7 +20,8 @@ struct Interfaces {
     wlan: String,
 }
 
-pub enum CouldConnectError {
+pub enum CouldConnect {
+    Connect(ConnectionSetting),
     Disconnect,
     Rescan,
     DoNothing,
@@ -38,7 +42,6 @@ impl Interfaces {
                     }
                     self.eth = iface.to_string();
                     support::run(&format!("ip l set {} up", self.eth), false);
-
                 }
                 'w' => {
                     if self.wlan.is_empty() {
@@ -46,28 +49,25 @@ impl Interfaces {
                     }
                     self.wlan = iface.to_string();
                     support::run(&format!("ip l set {} up", self.wlan), false);
-
                 }
-                _ => {
-                }
+                _ => {}
             }
         }
     }
 
     fn new() -> Interfaces {
-        let mut result =  Interfaces{eth: "".to_string(), wlan: "".to_string()};
+        let mut result = Interfaces {
+            eth: "".to_string(),
+            wlan: "".to_string(),
+        };
         result.detect();
         result
     }
 
     fn from_setting(&self, setting: &ConnectionSetting) -> String {
         match *setting {
-            ConnectionSetting::Ethernet => {
-                self.eth.clone()
-            }
-            _ => {
-                self.wlan.clone()
-            }
+            ConnectionSetting::Ethernet => self.eth.clone(),
+            _ => self.wlan.clone(),
         }
     }
 }
@@ -85,7 +85,7 @@ pub struct Connection {
 impl Connection {
     fn plugged_in(iface: &str) -> bool {
         let filename = format!("/sys/class/net/{}/operstate", iface);
-        if let Ok(value) = support::read_file(&filename)  {
+        if let Ok(value) = support::read_file(&filename) {
             value == "up"
         } else {
             false
@@ -95,8 +95,10 @@ impl Connection {
     fn wait_for_auth(&self, iface: &str) -> bool {
         let mut try = 0;
         while try < self.tries.load(Ordering::SeqCst) {
-            let output = support::run(&format!("wpa_cli -i {} -p /var/run/wpa status",
-                                               iface), false);
+            let output = support::run(
+                &format!("wpa_cli -i {} -p /var/run/wpa status", iface),
+                false,
+            );
             if let Some(ref caps) = parse(Parsers::WpaState, &output) {
                 let result = caps[1].as_ref();
                 if let "COMPLETED" = result {
@@ -112,7 +114,7 @@ impl Connection {
     fn wait_for_assoc(&self, iface: &str) -> bool {
         let mut try = 0;
 
-        while try < self.tries.load(Ordering::SeqCst)  {
+        while try < self.tries.load(Ordering::SeqCst) {
             let output = support::run(&format!("iwconfig {}", iface), false);
             if let Some(ref caps) = parse(Parsers::Associated, &output) {
                 if "Not-Associated" != caps[1].trim() {
@@ -128,29 +130,34 @@ impl Connection {
     fn aborted(&self) -> bool {
         let result = self.tries.load(Ordering::SeqCst) == 0;
         if result {
-            self.signal.send(SignalMsg::ConnectStatusChanged(ConnectionStatus::Aborted)).unwrap();
+            self.signal
+                .send(SignalMsg::ConnectStatusChanged(ConnectionStatus::Aborted))
+                .unwrap();
         }
         result
     }
 
     fn generate_wpa_config(setting: &ConnectionSetting) -> Option<String> {
         match *setting {
-            ConnectionSetting::Wifi{ref essid, ref password} => {
+            ConnectionSetting::Wifi {
+                ref essid,
+                ref password,
+            } => {
                 use std::fs::File;
                 use std::io::Write;
                 let filename = support::mktemp();
-                let config = support::run(&format!("wpa_passphrase \"{}\" \"{}\"",
-                                                   essid, password), false);
-                let mut file = File::create(&filename).
-                    expect("Cannot open wpa config file for writing");
-                file.write_all(config.as_bytes()).
-                    expect("Cannot write wpa config file");
+                let config = support::run(
+                    &format!("wpa_passphrase \"{}\" \"{}\"", essid, password),
+                    false,
+                );
+                let mut file =
+                    File::create(&filename).expect("Cannot open wpa config file for writing");
+                file.write_all(config.as_bytes())
+                    .expect("Cannot write wpa config file");
 
                 Some(filename)
             }
-            _ => {
-                None
-            }
+            _ => None,
         }
     }
 
@@ -161,9 +168,13 @@ impl Connection {
 
     fn get_network(&self, essid: &str) -> Result<NetworkInfo, ()> {
         if let Ok(networks) = self.networks.lock() {
-            let result = networks.iter().find(
-                | network | if let NetworkInfo::Wifi(net_essid, _, _, _) = network {
-                    essid == net_essid} else {false});
+            let result = networks.iter().find(|network| {
+                if let NetworkInfo::Wifi(net_essid, _, _, _) = network {
+                    essid == net_essid
+                } else {
+                    false
+                }
+            });
             if let Some(network) = result {
                 return Ok(network.clone());
             }
@@ -172,11 +183,13 @@ impl Connection {
     }
 
     fn add_wifi_network(networks: &mut Vec<NetworkInfo>, new_network: NetworkInfo) {
-        if let NetworkInfo::Wifi(ref new_essid, ref new_q,
-                                 ref new_enc, ref new_channel) = new_network {
+        if let NetworkInfo::Wifi(ref new_essid, ref new_q, ref new_enc, ref new_channel) =
+            new_network
+        {
             for network in networks.iter_mut() {
-                if let NetworkInfo::Wifi(ref mut essid, ref mut q,
-                                         ref mut enc, ref mut channel) = network {
+                if let NetworkInfo::Wifi(ref mut essid, ref mut q, ref mut enc, ref mut channel) =
+                    network
+                {
                     if essid == new_essid {
                         if new_q > q {
                             *q = *new_q;
@@ -214,8 +227,8 @@ impl Connection {
         }
 
         match setting {
-            ConnectionSetting::Wifi{ref essid, ..} |
-            ConnectionSetting::OpenWifi{ref essid} => {
+            ConnectionSetting::Wifi { ref essid, .. }
+            | ConnectionSetting::OpenWifi { ref essid } => {
                 self.change_state(ConnectionInfo::ConnectingWifi(essid.to_string()));
                 let network_found = self.get_network(essid);
                 if let Ok(found) = network_found {
@@ -231,7 +244,11 @@ impl Connection {
                 }
             }
         }
-        self.signal.send(SignalMsg::ConnectStatusChanged(ConnectionStatus::Initializing)).unwrap();
+        self.signal
+            .send(SignalMsg::ConnectStatusChanged(
+                ConnectionStatus::Initializing,
+            ))
+            .unwrap();
         let wpa_config = Connection::generate_wpa_config(&setting);
 
         support::run(&format!("ip l set {} up", iface), false);
@@ -241,38 +258,59 @@ impl Connection {
         }
         if let Some(ref c) = wpa_config {
             *self.wpa_config.lock().unwrap() = wpa_config.clone();
-            self.signal.send(SignalMsg::ConnectStatusChanged(ConnectionStatus::Authenticating)).unwrap();
-            support::run(&format!("wpa_supplicant -B -i{} -c{} -Dnl80211 -C/var/run/wpa",
-                                  iface, c), false);
+            self.signal
+                .send(SignalMsg::ConnectStatusChanged(
+                    ConnectionStatus::Authenticating,
+                ))
+                .unwrap();
+            support::run(
+                &format!(
+                    "wpa_supplicant -B -i{} -c{} -Dnl80211 -C/var/run/wpa",
+                    iface, c
+                ),
+                false,
+            );
             if !self.wait_for_auth(&iface) {
                 if !self.aborted() {
-                    self.signal.send(SignalMsg::ConnectStatusChanged(ConnectionStatus::AuthFail)).unwrap();
+                    self.signal
+                        .send(SignalMsg::ConnectStatusChanged(ConnectionStatus::AuthFail))
+                        .unwrap();
                 }
                 return false;
             }
-        } else if let ConnectionSetting::OpenWifi{ref essid} = setting {
-            self.signal.send(SignalMsg::ConnectStatusChanged(ConnectionStatus::Connecting)).unwrap();
+        } else if let ConnectionSetting::OpenWifi { ref essid } = setting {
+            self.signal
+                .send(SignalMsg::ConnectStatusChanged(
+                    ConnectionStatus::Connecting,
+                ))
+                .unwrap();
             if let NetworkInfo::Wifi(_, _, _, ref channel) = network {
-                support::run(&format!("iwconfig {} essid -- {} channel {}", iface, essid,
-                                      *channel), false);
+                support::run(
+                    &format!("iwconfig {} essid -- {} channel {}", iface, essid, *channel),
+                    false,
+                );
                 self.tries.store(ASSOC_MAX_TRIES, Ordering::SeqCst);
                 if !self.wait_for_assoc(&iface) {
-                    self.signal.send(SignalMsg::ConnectStatusChanged(ConnectionStatus::ConnectFail)).unwrap();
+                    self.signal
+                        .send(SignalMsg::ConnectStatusChanged(
+                            ConnectionStatus::ConnectFail,
+                        ))
+                        .unwrap();
                     return false;
                 }
             }
         }
-        self.signal.send(SignalMsg::ConnectStatusChanged(ConnectionStatus::GettingIP)).unwrap();
+        self.signal
+            .send(SignalMsg::ConnectStatusChanged(ConnectionStatus::GettingIP))
+            .unwrap();
         let output = support::run(&format!("dhcpcd -4 -i {}", iface), true);
         if let Some(ref caps) = parse(Parsers::Ip, &output) {
             let info = match setting {
-                ConnectionSetting::Ethernet => {
-                    ConnectionInfo::Ethernet(caps[1].to_string())
-                }
+                ConnectionSetting::Ethernet => ConnectionInfo::Ethernet(caps[1].to_string()),
 
-                ConnectionSetting::Wifi{essid, ..} | ConnectionSetting::OpenWifi{essid} => {
+                ConnectionSetting::Wifi { essid, .. } | ConnectionSetting::OpenWifi { essid } => {
                     if let NetworkInfo::Wifi(_, ref quality, ref enc, _) = network {
-                       ConnectionInfo::Wifi(essid.to_string(), *quality, *enc, caps[1].to_string())
+                        ConnectionInfo::Wifi(essid.to_string(), *quality, *enc, caps[1].to_string())
                     } else {
                         ConnectionInfo::NotConnected
                     }
@@ -292,10 +330,13 @@ impl Connection {
     pub fn disconnect(&self) {
         self.tries.store(0, Ordering::SeqCst);
         if let Ok(ifaces) = self.ifaces.lock() {
-            let disconnect_iface = | ref iface | {
+            let disconnect_iface = |ref iface| {
                 support::run(&format!("dhcpcd -k {}", iface), false);
                 support::run(&format!("ip addr flush dev {}", iface), false);
-                support::run(&format!("wpa_cli -i {} -p /var/run/wpa terminate", iface), false);
+                support::run(
+                    &format!("wpa_cli -i {} -p /var/run/wpa terminate", iface),
+                    false,
+                );
             };
 
             disconnect_iface(&ifaces.eth);
@@ -311,8 +352,8 @@ impl Connection {
         *self.wpa_config.lock().unwrap() = None;
         self.change_state(ConnectionInfo::NotConnected);
     }
-        
-        pub fn auto_connect_possible(&self, known_networks: &KnownNetworks) -> Result<ConnectionSetting, CouldConnectError> {
+
+    pub fn auto_connect_possible(&self, known_networks: &KnownNetworks) -> CouldConnect {
         let mut eth_plugged_in = false;
         let mut wifi_plugged_in = false;
         if let Ok(mut ifaces) = self.ifaces.lock() {
@@ -320,9 +361,6 @@ impl Connection {
             eth_plugged_in = Connection::plugged_in(&ifaces.eth);
             wifi_plugged_in = Connection::plugged_in(&ifaces.wlan);
         }
-
-        let mut setting: Option<ConnectionSetting> = None;
-        let mut error = CouldConnectError::DoNothing;
 
         let connection = self.current.read().unwrap().clone();
         match connection {
@@ -334,12 +372,14 @@ impl Connection {
                             networks.insert(0, NetworkInfo::Ethernet);
                         }
                     }
-                    self.signal.send(SignalMsg::NetworkList(networks.clone())).unwrap();
-                    setting = Some(ConnectionSetting::Ethernet);
+                    self.signal
+                        .send(SignalMsg::NetworkList(networks.clone()))
+                        .unwrap();
+                    return CouldConnect::Connect(ConnectionSetting::Ethernet);
                 } else {
                     let networks = self.networks.lock().unwrap();
                     if networks.len() == 0 {
-                        error = CouldConnectError::Rescan;
+                        return CouldConnect::Rescan;
                     }
                     for n in networks.iter() {
                         if let NetworkInfo::Wifi(ref essid, _, enc, _) = n {
@@ -347,13 +387,19 @@ impl Connection {
                                 if known.auto {
                                     if let Some(ref pass) = known.password {
                                         if *enc {
-                                            setting = Some(ConnectionSetting::Wifi{essid: essid.to_string(),
-                                                                                   password: pass.to_string()});
-                                            break;
+                                            return CouldConnect::Connect(
+                                                ConnectionSetting::Wifi {
+                                                    essid: essid.to_string(),
+                                                    password: pass.to_string(),
+                                                },
+                                            );
                                         }
                                     } else if !enc {
-                                        setting = Some(ConnectionSetting::OpenWifi{essid: essid.to_string()});
-                                        break;
+                                        return CouldConnect::Connect(
+                                            ConnectionSetting::OpenWifi {
+                                                essid: essid.to_string(),
+                                            },
+                                        );
                                     }
                                 }
                             }
@@ -364,19 +410,24 @@ impl Connection {
 
             ConnectionInfo::Wifi(ref essid, _, _, _) => {
                 if eth_plugged_in {
-                    setting = Some(ConnectionSetting::Ethernet);
+                    return CouldConnect::Connect(ConnectionSetting::Ethernet);
                 } else if !wifi_plugged_in {
                     if let Ok(mut networks) = self.networks.lock() {
-                        let result = networks.iter().position(
-                            |x| return if let NetworkInfo::Wifi(name, _, _, _) = x {
+                        let result = networks.iter().position(|x| {
+                            return if let NetworkInfo::Wifi(name, _, _, _) = x {
                                 name == essid
-                            } else {false});
+                            } else {
+                                false
+                            };
+                        });
                         if let Some(index) = result {
                             networks.remove(index);
-                            self.signal.send(SignalMsg::NetworkList(networks.clone())).unwrap();
+                            self.signal
+                                .send(SignalMsg::NetworkList(networks.clone()))
+                                .unwrap();
                         }
                     }
-                    error = CouldConnectError::Disconnect;
+                    return CouldConnect::Disconnect;
                 }
             }
 
@@ -386,31 +437,28 @@ impl Connection {
                     if networks.len() > 0 {
                         if let NetworkInfo::Ethernet = networks[0] {
                             networks.remove(0);
-                            self.signal.send(SignalMsg::NetworkList(networks.clone())).unwrap();
+                            self.signal
+                                .send(SignalMsg::NetworkList(networks.clone()))
+                                .unwrap();
                         }
                     }
-                    error = CouldConnectError::Disconnect;
+                    return CouldConnect::Disconnect;
                 }
             }
-            _ => {
-            }
+            _ => {}
         }
-        if let Some(s) = setting {
-            Ok(s)
-        } else {
-            Err(error)
-        }
+        CouldConnect::DoNothing
     }
 
     fn dbm2perc(dbm: i32) -> u32 {
-        return if dbm  < -92 {
+        return if dbm < -92 {
             1
         } else if dbm > -21 {
             100
         } else {
             let x = dbm as f32;
-            ((-0.0154*x*x)-(0.3794*x)+98.182).round() as u32
-        }
+            ((-0.0154 * x * x) - (0.3794 * x) + 98.182).round() as u32
+        };
     }
 
     pub fn scan(&self) {
@@ -433,11 +481,22 @@ impl Connection {
                 enc = true;
                 essid = "".to_string();
                 if let Some(ref caps) = parse(Parsers::NetworkChannel, chunk) {
-                    channel = caps.get(1).unwrap().as_str().parse::<u32>().expect("should be a value");
+                    channel = caps
+                        .get(1)
+                        .unwrap()
+                        .as_str()
+                        .parse::<u32>()
+                        .expect("should be a value");
                 }
 
                 if let Some(ref caps) = parse(Parsers::NetworkQuality, chunk) {
-                    quality = Connection::dbm2perc(caps.get(1).unwrap().as_str().parse::<i32>().expect("should be a value"));
+                    quality = Connection::dbm2perc(
+                        caps.get(1)
+                            .unwrap()
+                            .as_str()
+                            .parse::<i32>()
+                            .expect("should be a value"),
+                    );
                 }
 
                 if let Some(ref caps) = parse(Parsers::NetworkEssid, chunk) {
@@ -455,8 +514,10 @@ impl Connection {
                 }
 
                 if !essid.is_empty() {
-                        Connection::add_wifi_network(
-                            &mut networks, NetworkInfo::Wifi(essid, quality, enc, channel));
+                    Connection::add_wifi_network(
+                        &mut networks,
+                        NetworkInfo::Wifi(essid, quality, enc, channel),
+                    );
                 }
             }
 

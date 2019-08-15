@@ -1,7 +1,7 @@
-use connection_types::{KnownNetworks};
+use connection_types::KnownNetworks;
+use std::path::Path;
 use support;
 use toml;
-use std::path::Path;
 
 const CONFIG_FILE: &str = "/etc/snm/networks";
 
