@@ -2,7 +2,7 @@ use dbus::tree::{DataType, MethodErr};
 use std::{sync::{Arc, mpsc, Mutex, atomic::{AtomicBool, AtomicU32, Ordering}}, thread, time, fmt};
 use connection_types::{*};
 use network_info::NetworkInfo;
-use connection::Connection;
+use connection::{Connection, CouldConnectError};
 use signalmsg::SignalMsg;
 use dbus_interface;
 use config;
@@ -59,12 +59,20 @@ impl NetworkManager {
                                     connection.disconnect();
                                 }
                             }
-                            Err(do_disconnect) => {
-                                if do_disconnect {
-                                    connection.disconnect();
-                                    connection.scan();
-                                    iter = 0;
-                                } 
+                            Err(error) => {
+                                match error {
+                                    CouldConnectError::Disconnect => {
+                                        connection.disconnect();
+                                        connection.scan();
+                                        iter = 0;
+                                    }
+                                    CouldConnectError::Rescan => {
+                                        connection.scan();
+                                        iter = 0;
+                                    }
+                                    _ => {
+                                    }
+                                }
                             }
                         }
                     }

@@ -17,6 +17,12 @@ struct Interfaces {
     wlan: String,
 }
 
+pub enum CouldConnectError {
+    Disconnect,
+    Rescan,
+    DoNothing,
+}
+
 impl Interfaces {
     fn detect(&mut self) {
         use std::fs;
@@ -305,8 +311,8 @@ impl Connection {
         *self.wpa_config.lock().unwrap() = None;
         self.change_state(ConnectionInfo::NotConnected);
     }
-
-    pub fn auto_connect_possible(&self, known_networks: &KnownNetworks) -> Result<ConnectionSetting, bool> {
+        
+        pub fn auto_connect_possible(&self, known_networks: &KnownNetworks) -> Result<ConnectionSetting, CouldConnectError> {
         let mut eth_plugged_in = false;
         let mut wifi_plugged_in = false;
         if let Ok(mut ifaces) = self.ifaces.lock() {
@@ -316,7 +322,7 @@ impl Connection {
         }
 
         let mut setting: Option<ConnectionSetting> = None;
-        let mut do_disconnect = false;
+        let mut error = CouldConnectError::DoNothing;
 
         let connection = self.current.read().unwrap().clone();
         match connection {
@@ -332,6 +338,9 @@ impl Connection {
                     setting = Some(ConnectionSetting::Ethernet);
                 } else {
                     let networks = self.networks.lock().unwrap();
+                    if networks.len() == 0 {
+                        error = CouldConnectError::Rescan;
+                    }
                     for n in networks.iter() {
                         if let NetworkInfo::Wifi(ref essid, _, enc, _) = n {
                             if let Some(ref known) = known_networks.get(essid) {
@@ -367,7 +376,7 @@ impl Connection {
                             self.signal.send(SignalMsg::NetworkList(networks.clone())).unwrap();
                         }
                     }
-                    do_disconnect = true;
+                    error = CouldConnectError::Disconnect;
                 }
             }
 
@@ -380,7 +389,7 @@ impl Connection {
                             self.signal.send(SignalMsg::NetworkList(networks.clone())).unwrap();
                         }
                     }
-                    do_disconnect = true;
+                    error = CouldConnectError::Disconnect;
                 }
             }
             _ => {
@@ -389,7 +398,7 @@ impl Connection {
         if let Some(s) = setting {
             Ok(s)
         } else {
-            Err(do_disconnect)
+            Err(error)
         }
     }
 
