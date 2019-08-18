@@ -464,61 +464,61 @@ impl Connection {
     pub fn scan(&self) {
         use std::str;
         let mut networks = Vec::new();
-        if let Ok(ifaces) = self.ifaces.lock() {
-            support::run(&format!("ip l set {} up", ifaces.wlan), false);
-            let output = support::run(&format!("iw dev {} scan", ifaces.wlan), false);
-            if Connection::plugged_in(&ifaces.eth) {
-                networks.push(NetworkInfo::Ethernet);
+        let ifaces = self.ifaces.lock().unwrap().clone();
+
+        support::run(&format!("ip l set {} up", ifaces.wlan), false);
+        let output = support::run(&format!("iw dev {} scan", ifaces.wlan), false);
+        if Connection::plugged_in(&ifaces.eth) {
+            networks.push(NetworkInfo::Ethernet);
+        }
+
+        let mut quality: u32;
+        let mut essid: String;
+        let mut enc: bool;
+        let mut channel: u32;
+        for chunk in output.split(&format!("(on {})", ifaces.wlan)) {
+            quality = 0;
+            channel = 0;
+            enc = true;
+            essid = "".to_string();
+            if let Some(ref caps) = parse(Parsers::NetworkChannel, chunk) {
+                channel = caps
+                    .get(1)
+                    .unwrap()
+                    .as_str()
+                    .parse::<u32>()
+                    .expect("should be a value");
             }
 
-            let mut quality: u32;
-            let mut essid: String;
-            let mut enc: bool;
-            let mut channel: u32;
-            for chunk in output.split(&format!("(on {})", ifaces.wlan)) {
-                quality = 0;
-                channel = 0;
-                enc = true;
-                essid = "".to_string();
-                if let Some(ref caps) = parse(Parsers::NetworkChannel, chunk) {
-                    channel = caps
-                        .get(1)
+            if let Some(ref caps) = parse(Parsers::NetworkQuality, chunk) {
+                quality = Connection::dbm2perc(
+                    caps.get(1)
                         .unwrap()
                         .as_str()
-                        .parse::<u32>()
-                        .expect("should be a value");
-                }
+                        .parse::<i32>()
+                        .expect("should be a value"),
+                );
+            }
 
-                if let Some(ref caps) = parse(Parsers::NetworkQuality, chunk) {
-                    quality = Connection::dbm2perc(
-                        caps.get(1)
-                            .unwrap()
-                            .as_str()
-                            .parse::<i32>()
-                            .expect("should be a value"),
-                    );
+            if let Some(ref caps) = parse(Parsers::NetworkEssid, chunk) {
+                let parsed = support::parse_essid(caps.get(1).unwrap().as_str());
+                let decoded = str::from_utf8(&parsed);
+                if let Ok(value) = decoded {
+                    essid = value.to_string();
                 }
+            }
 
-                if let Some(ref caps) = parse(Parsers::NetworkEssid, chunk) {
-                    let parsed = support::parse_essid(caps.get(1).unwrap().as_str());
-                    let decoded = str::from_utf8(&parsed);
-                    if let Ok(value) = decoded {
-                        essid = value.to_string();
-                    }
+            if let Some(ref caps) = parse(Parsers::NetworkEnc, chunk) {
+                if caps.get(1).unwrap().as_str().matches("Privacy").count() == 0 {
+                    enc = false;
                 }
+            }
 
-                if let Some(ref caps) = parse(Parsers::NetworkEnc, chunk) {
-                    if caps.get(1).unwrap().as_str().matches("Privacy").count() == 0 {
-                        enc = false;
-                    }
-                }
-
-                if !essid.is_empty() {
-                    Connection::add_wifi_network(
-                        &mut networks,
-                        NetworkInfo::Wifi(essid, quality, enc, channel),
-                    );
-                }
+            if !essid.is_empty() {
+                Connection::add_wifi_network(
+                    &mut networks,
+                    NetworkInfo::Wifi(essid, quality, enc, channel),
+                );
             }
 
             networks.as_mut_slice().sort();

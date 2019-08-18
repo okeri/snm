@@ -23,6 +23,7 @@ pub struct NetworkManager {
     client_count: Arc<AtomicU32>,
     running: Arc<AtomicBool>,
     monitor: Option<thread::JoinHandle<()>>,
+    scanner: Option<thread::JoinHandle<()>>,
     known_networks: Arc<Mutex<KnownNetworks>>,
     sender: mpsc::Sender<ConnectionSetting>,
 }
@@ -31,18 +32,18 @@ impl NetworkManager {
     fn create_monitor(
         &self,
         receiver: mpsc::Receiver<ConnectionSetting>,
+        scanner: mpsc::Sender<()>,
     ) -> Option<thread::JoinHandle<()>> {
         let auto = self.auto_connect.clone();
         let client_count = self.client_count.clone();
         let running = self.running.clone();
         let connection = self.connection.clone();
         let known_networks = self.known_networks.clone();
-
         Some(thread::spawn(move || {
             let scan_iter = NETWORK_SCAN_INTERVAL / NETWORK_CHECK_INTERVAL;
             let mut iter = 0;
             let doscan = || {
-                connection.scan();
+                scanner.send(()).unwrap_or_default();
                 0
             };
             connection.acquire();
@@ -104,10 +105,21 @@ impl NetworkManager {
             client_count: Arc::new(AtomicU32::new(0)),
             running: Arc::new(AtomicBool::new(true)),
             monitor: None,
+            scanner: None,
             known_networks: Arc::new(Mutex::new(config::read_networks())),
             sender: connection_sender,
         };
-        this.monitor = this.create_monitor(receiver);
+        let (scan_sender, scan_recv) = mpsc::channel::<()>();
+        let connection = this.connection.clone();
+        let running = this.running.clone();
+        this.monitor = this.create_monitor(receiver, scan_sender);
+        this.scanner = Some(thread::spawn(move || {
+            while running.load(Ordering::SeqCst) {
+                if let Ok(_) = scan_recv.recv() {
+                    connection.scan();
+                }
+            }
+        }));
         this
     }
 
@@ -252,6 +264,7 @@ impl Drop for NetworkManager {
         if self.running.load(Ordering::SeqCst) {
             self.running.store(false, Ordering::SeqCst);
             self.monitor.take().unwrap().join().unwrap_or(());
+            self.scanner.take().unwrap().join().unwrap_or(());
         }
     }
 }
