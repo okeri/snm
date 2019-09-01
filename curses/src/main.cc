@@ -65,7 +65,7 @@ int main(int argc, char *argv[]) {
                         return 0;
                     }
 
-                case 'C': case 'c':
+                case 'C': case 'c': case ' ':
                     connect();
                     break;
 
