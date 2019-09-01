@@ -319,7 +319,6 @@ impl Connection {
             self.change_state(info);
             return true;
         }
-
         false
     }
 
@@ -514,7 +513,7 @@ impl Connection {
                 }
             }
 
-            if !essid.is_empty() {
+            if !essid.is_empty() && channel != 0 {
                 Connection::add_wifi_network(
                     &mut networks,
                     NetworkInfo::Wifi(essid, quality, enc, channel),
