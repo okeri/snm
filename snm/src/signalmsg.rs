@@ -64,7 +64,7 @@ impl SignalMsg {
                             ));
                         }
 
-                        NetworkInfo::Wifi(essid, quality, enc, _) => {
+                        NetworkInfo::Wifi(essid, quality, enc) => {
                             arg_data.push((2, essid.to_string(), *enc, *quality));
                         }
                     }

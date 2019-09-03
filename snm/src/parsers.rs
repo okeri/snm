@@ -7,7 +7,6 @@ pub enum Parsers {
     NetworkQuality,
     NetworkEnc,
     NetworkEssid,
-    NetworkChannel,
 }
 
 lazy_static! {
@@ -17,8 +16,7 @@ lazy_static! {
         Regex::new(r".*Access Point: ([\P{Cc}]*).*\n").unwrap(),
         Regex::new(r".*signal: ([^\.]+)\.").unwrap(),
         Regex::new(r".*capability: ([^\n]*)\n").unwrap(),
-        Regex::new(r".*SSID: ([^\n]*)\n").unwrap(),
-        Regex::new(r".*DS Parameter set: channel ([\d]*)").unwrap()
+        Regex::new(r".*SSID: ([^\n]*)\n").unwrap()
     ];
 }
 

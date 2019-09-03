@@ -206,7 +206,7 @@ impl dbus_interface::ComGithubOkeriSnm for NetworkManager {
             .iter()
             .map(|network| match network {
                 NetworkInfo::Ethernet => (1, "Ethernet connection".to_string(), false, 100),
-                NetworkInfo::Wifi(essid, quality, enc, _) => (2, essid.to_string(), *enc, *quality),
+                NetworkInfo::Wifi(essid, quality, enc) => (2, essid.to_string(), *enc, *quality),
             })
             .collect();
         Ok(result)

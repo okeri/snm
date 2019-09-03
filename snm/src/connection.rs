@@ -169,7 +169,7 @@ impl Connection {
     fn get_network(&self, essid: &str) -> Result<NetworkInfo, ()> {
         if let Ok(networks) = self.networks.lock() {
             let result = networks.iter().find(|network| {
-                if let NetworkInfo::Wifi(net_essid, _, _, _) = network {
+                if let NetworkInfo::Wifi(net_essid, _, _) = network {
                     essid == net_essid
                 } else {
                     false
@@ -183,18 +183,17 @@ impl Connection {
     }
 
     fn add_wifi_network(networks: &mut Vec<NetworkInfo>, new_network: NetworkInfo) {
-        if let NetworkInfo::Wifi(ref new_essid, ref new_q, ref new_enc, ref new_channel) =
+        if let NetworkInfo::Wifi(ref new_essid, ref new_q, ref new_enc) =
             new_network
         {
             for network in networks.iter_mut() {
-                if let NetworkInfo::Wifi(ref mut essid, ref mut q, ref mut enc, ref mut channel) =
+                if let NetworkInfo::Wifi(ref mut essid, ref mut q, ref mut enc) =
                     network
                 {
                     if essid == new_essid {
                         if new_q > q {
                             *q = *new_q;
                             *enc = *new_enc;
-                            *channel = *new_channel;
                         }
                         return;
                     }
@@ -284,9 +283,9 @@ impl Connection {
                     ConnectionStatus::Connecting,
                 ))
                 .unwrap();
-            if let NetworkInfo::Wifi(_, _, _, ref channel) = network {
+            if let NetworkInfo::Wifi(_, _, _) = network {
                 support::run(
-                    &format!("iwconfig {} essid -- {} channel {}", iface, essid, *channel),
+                    &format!("iwconfig {} essid -- {}", iface, essid),
                     false,
                 );
                 self.tries.store(ASSOC_MAX_TRIES, Ordering::SeqCst);
@@ -309,9 +308,8 @@ impl Connection {
                 ConnectionSetting::Ethernet => ConnectionInfo::Ethernet(caps[1].to_string()),
 
                 ConnectionSetting::Wifi { essid, .. } | ConnectionSetting::OpenWifi { essid } => {
-                    if let NetworkInfo::Wifi(_, ref quality, ref enc, _) = network {
-                        ConnectionInfo::Wifi(essid.to_string(), *quality, *enc, caps[1].to_string())
-                    } else {
+                    if let NetworkInfo::Wifi(_, ref quality, ref enc) = network {
+                        ConnectionInfo::Wifi(essid.to_string(), *quality, *enc, caps[1].to_string())                    } else {
                         ConnectionInfo::NotConnected
                     }
                 }
@@ -367,7 +365,7 @@ impl Connection {
                 if eth_plugged_in {
                     let mut networks = self.networks.lock().unwrap();
                     if networks.len() > 0 {
-                        if let NetworkInfo::Wifi(_, _, _, _) = networks[0] {
+                        if let NetworkInfo::Wifi(_, _, _) = networks[0] {
                             networks.insert(0, NetworkInfo::Ethernet);
                         }
                     }
@@ -381,7 +379,7 @@ impl Connection {
                         return CouldConnect::Rescan;
                     }
                     for n in networks.iter() {
-                        if let NetworkInfo::Wifi(ref essid, _, enc, _) = n {
+                        if let NetworkInfo::Wifi(ref essid, _, enc) = n {
                             if let Some(ref known) = known_networks.get(essid) {
                                 if known.auto {
                                     if let Some(ref pass) = known.password {
@@ -413,7 +411,7 @@ impl Connection {
                 } else if !wifi_plugged_in {
                     if let Ok(mut networks) = self.networks.lock() {
                         let result = networks.iter().position(|x| {
-                            return if let NetworkInfo::Wifi(name, _, _, _) = x {
+                            return if let NetworkInfo::Wifi(name, _, _) = x {
                                 name == essid
                             } else {
                                 false
@@ -474,21 +472,10 @@ impl Connection {
         let mut quality: u32;
         let mut essid: String;
         let mut enc: bool;
-        let mut channel: u32;
         for chunk in output.split(&format!("(on {})", ifaces.wlan)) {
             quality = 0;
-            channel = 0;
             enc = true;
             essid = "".to_string();
-            if let Some(ref caps) = parse(Parsers::NetworkChannel, chunk) {
-                channel = caps
-                    .get(1)
-                    .unwrap()
-                    .as_str()
-                    .parse::<u32>()
-                    .expect("should be a value");
-            }
-
             if let Some(ref caps) = parse(Parsers::NetworkQuality, chunk) {
                 quality = Connection::dbm2perc(
                     caps.get(1)
@@ -513,10 +500,10 @@ impl Connection {
                 }
             }
 
-            if !essid.is_empty() && channel != 0 {
+            if !essid.is_empty() {
                 Connection::add_wifi_network(
                     &mut networks,
-                    NetworkInfo::Wifi(essid, quality, enc, channel),
+                    NetworkInfo::Wifi(essid, quality, enc),
                 );
             }
 
