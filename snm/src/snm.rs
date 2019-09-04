@@ -81,7 +81,9 @@ impl NetworkManager {
                                 iter = doscan();
                             }
                             CouldConnect::Rescan => {
-                                iter = doscan();
+                                if iter >= scan_iter {
+                                    iter = doscan();
+                                }
                             }
                             _ => {}
                         }
