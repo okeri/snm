@@ -125,13 +125,12 @@ impl NetworkManager {
         this
     }
 
-    fn get_password(&self, essid: &str) -> Result<String, ()> {
+    fn get_setting(&self, essid: &str) -> Result<ConnectionSetting, ()> {
         if let Some(ref known) = self.known_networks.lock().unwrap().get(essid) {
-            if let Some(ref pass) = known.password {
-                return Ok(pass.to_string());
-            }
+            Ok(known.to_setting(essid))
+        } else {
+            Err(())
         }
-        Err(())
     }
 }
 
@@ -152,20 +151,16 @@ impl dbus_interface::ComGithubOkeriSnm for NetworkManager {
         let connection_setting = match tp {
             1 => ConnectionSetting::Ethernet,
             2 => {
-                if enc {
-                    if let Ok(pass) = self.get_password(essid) {
-                        ConnectionSetting::Wifi {
-                            essid: essid.to_string(),
-                            password: pass.to_string(),
-                        }
-                    } else {
-                        return Err(MethodErr::failed(
-                            &"Connection is secured but no password specified",
-                        ));
-                    }
+                if let Ok(found) = self.get_setting(essid) {
+                    found
+                } else if enc {
+                    return Err(MethodErr::failed(
+                        &"Connection is secured but no password specified",
+                    ));
                 } else {
                     ConnectionSetting::OpenWifi {
                         essid: essid.to_string(),
+                        threshold: None,
                     }
                 }
             }
@@ -223,7 +218,7 @@ impl dbus_interface::ComGithubOkeriSnm for NetworkManager {
         Ok(())
     }
 
-    fn get_props(&self, essid: &str) -> Result<(String, bool, bool), Self::Err> {
+    fn get_props(&self, essid: &str) -> Result<(String, i32, bool, bool, bool), Self::Err> {
         if let Some(ref known) = self.known_networks.lock().unwrap().get(essid) {
             Ok(known.to_dbus_tuple())
         } else {
@@ -235,10 +230,12 @@ impl dbus_interface::ComGithubOkeriSnm for NetworkManager {
         &self,
         essid: &str,
         password: &str,
+        threshold: i32,
         auto: bool,
         encryption: bool,
+        roaming: bool,
     ) -> Result<(), Self::Err> {
-        let props = KnownNetwork::new(auto, encryption, password);
+        let props = KnownNetwork::new(auto, encryption, roaming, password, threshold);
         let upd_props = props.clone();
         if let Ok(mut known_networks) = self.known_networks.lock() {
             if encryption || auto {

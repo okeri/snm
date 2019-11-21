@@ -23,14 +23,18 @@
     <method name="get_props">
       <arg type="s" direction="in" name="essid"/>
       <arg type="s" direction="out" name="password"/>
+      <arg type="i" direction="out" name="threshold"/>
       <arg type="b" direction="out" name="auto_connect"/>
       <arg type="b" direction="out" name="encryption"/>
+      <arg type="b" direction="out" name="roaming"/>
     </method>
     <method name="set_props">
       <arg type="s" direction="in" name="essid"/>
       <arg type="s" direction="in" name="password"/>
+      <arg type="i" direction="in" name="threshold"/>
       <arg type="b" direction="in" name="auto_connect"/>
       <arg type="b" direction="in" name="encryption"/>
+      <arg type="b" direction="in" name="roaming"/>
     </method>
     <signal name="connect_status_changed">
       <arg type="u" name="status"/>

@@ -110,12 +110,19 @@ class snm_proxy : public DBus::InterfaceProxy {
 
         ConnectionProps result;
         bool enc;
+        bool roaming;
+        int32_t to;
         std::string password;
         ri >> password;
+        ri >> to;
         ri >> result.auto_connect;
         ri >> enc;
+        ri >> roaming;
         if (enc) {
             result.password = password;
+        }
+        if (roaming) {
+            result.threshold = to;
         }
         return result;
     }
@@ -133,8 +140,10 @@ class snm_proxy : public DBus::InterfaceProxy {
         DBus::MessageIter wi = call.writer();
         wi << essid;
         wi << props.password.value_or("");
+        wi << props.threshold.value_or(-65);
         wi << props.auto_connect;
         wi << props.password.has_value();
+        wi << props.threshold.has_value();
         call.member("set_props");
         invoke_method_noreply(call);
     }

@@ -2,7 +2,7 @@ use std::process::Command;
 use std::{
     collections::VecDeque,
     fs,
-    io::{self, Read},
+    io::{self, Read, Write},
     mem,
     path::Path,
     ptr, str,
@@ -23,11 +23,6 @@ pub fn run(cmd: &str, err: bool) -> String {
             .expect("process returned bad output")
             .to_string()
     }
-}
-
-pub fn mktemp() -> String {
-    let output = run("mktemp -u", false);
-    output[0..output.len() - 1].to_string()
 }
 
 pub fn read_file(filename: &str) -> Result<String, io::Error> {
@@ -88,4 +83,48 @@ pub fn parse_essid(input: &str) -> Vec<u8> {
         };
     }
     result
+}
+
+fn mktemp() -> String {
+    let output = run("mktemp -u", false);
+    output[0..output.len() - 1].to_string()
+}
+
+pub fn gen_wpa_config(
+    essid: &str,
+    password: Option<&str>,
+    signal_threshold: Option<i32>,
+    roaming_db: &str,
+    short_interval: u32,
+    long_interval: u32,
+) -> std::io::Result<String> {
+    let filename = mktemp();
+    let mut file = fs::File::create(&filename)?;
+    writeln!(file, "network={{\n\tssid=\"{}\"", essid)?;
+    if let Some(pass) = password {
+        use ring::pbkdf2;
+        let mut result: [u8; 32] = [0; 32];
+        pbkdf2::derive(
+            pbkdf2::PBKDF2_HMAC_SHA1,
+            std::num::NonZeroU32::new(4096).unwrap(),
+            essid.as_bytes(),
+            pass.as_bytes(),
+            &mut result,
+        );
+        write!(file, "\tpsk=")?;
+        for i in result.iter() {
+            write!(file, "{:02x}", i)?;
+        }
+    } else {
+        write!(file, "\tkey_mgmt=NONE")?;
+    }
+    if let Some(threshold) = signal_threshold {
+        write!(
+            file,
+            "\n\tbgscan=\"learn:{}:{}:{}:{}\"",
+            short_interval, threshold, long_interval, roaming_db
+        )?;
+    }
+    writeln!(file, "\n}}")?;
+    Ok(filename)
 }
