@@ -127,11 +127,9 @@ class snm_proxy : public DBus::InterfaceProxy {
         return result;
     }
 
-    void monitor(bool active) {
+    void hello() {
         DBus::CallMessage call;
-        DBus::MessageIter wi = call.writer();
-        wi << active;
-        call.member("monitor");
+        call.member("hello");
         invoke_method_noreply(call);
     }
 

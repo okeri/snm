@@ -14,9 +14,7 @@
     <method name="get_networks">
       <arg type="a(usbu)" direction="out" name="networks"/>
     </method>
-    <method name="monitor">
-      <arg type="b" direction="in" name="active"/>
-    </method>
+    <method name="hello" />
     <signal name="network_list">
       <arg type="a(usbu)" name="networks"/>
     </signal>

@@ -12,10 +12,7 @@ class NetworkManager : public snm_proxy,
         snm_proxy::ConnectionStatusChanged csc, snm_proxy::NetworkList nl) :
         snm_proxy(sc, csc, nl),
         DBus::ObjectProxy(connection, "/", "com.github.okeri.snm") {
-        monitor(true);
-    }
-    ~NetworkManager() {
-        monitor(false);
+        hello();
     }
 };
 
