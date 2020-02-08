@@ -1,9 +1,6 @@
 #include "DBusLoop.hh"
 
-DBusLoop::DBusLoop() :
-        dispatcherThread_([] {
-                dispatcher_.enter();
-            }) {
+DBusLoop::DBusLoop() : dispatcherThread_([] { dispatcher_.enter(); }) {
 }
 
 DBusLoop::~DBusLoop() {
