@@ -1,3 +1,4 @@
+use std::cmp::{Ord, Ordering};
 use std::collections::HashMap;
 
 pub enum ConnectionStatus {
@@ -101,20 +102,6 @@ impl KnownNetwork {
         }
     }
 
-    pub fn to_dbus_tuple(&self) -> (String, i32, bool, bool, bool) {
-        (
-            self.password.clone().unwrap_or("".to_string()),
-            self.threshold.unwrap_or(-65),
-            self.auto,
-            self.password.is_some(),
-            self.threshold.is_some(),
-        )
-    }
-
-    pub fn default_dbus_tuple() -> (String, i32, bool, bool, bool) {
-        ("".to_string(), -65, false, false, false)
-    }
-
     pub fn to_setting(&self, essid: &str) -> ConnectionSetting {
         if let Some(ref pass) = self.password {
             ConnectionSetting::Wifi {
@@ -131,4 +118,91 @@ impl KnownNetwork {
     }
 }
 
+impl Default for KnownNetwork {
+    fn default() -> Self {
+        KnownNetwork {
+            auto: false,
+            password: None,
+            threshold: None,
+        }
+    }
+}
+
 pub type KnownNetworks = HashMap<String, KnownNetwork>;
+
+#[derive(Eq, Clone)]
+pub enum NetworkInfo {
+    Ethernet,
+    Wifi(String, u32, bool),
+}
+
+impl Ord for NetworkInfo {
+    fn cmp(&self, other: &NetworkInfo) -> Ordering {
+        if let NetworkInfo::Wifi(ref essid1, ref quality1, _) = *self {
+            if let NetworkInfo::Wifi(ref essid2, ref quality2, _) = other {
+                let t = quality2.cmp(quality1);
+                if t == Ordering::Equal {
+                    essid1.cmp(essid2)
+                } else {
+                    t
+                }
+            } else {
+                Ordering::Greater
+            }
+        } else {
+            Ordering::Less
+        }
+    }
+}
+
+impl PartialEq for NetworkInfo {
+    fn eq(&self, other: &NetworkInfo) -> bool {
+        if let NetworkInfo::Wifi(ref essid1, _, _) = *self {
+            if let NetworkInfo::Wifi(ref essid2, _, _) = other {
+                return essid1 == essid2;
+            }
+        }
+        false
+    }
+}
+
+impl PartialOrd for NetworkInfo {
+    fn partial_cmp(&self, other: &NetworkInfo) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+#[derive(Clone)]
+pub struct NetworkList(Vec<NetworkInfo>);
+
+impl NetworkList {
+    pub fn new() -> Self {
+        NetworkList { 0: vec![] }
+    }
+}
+
+impl std::ops::Deref for NetworkList {
+    type Target = Vec<NetworkInfo>;
+    fn deref(&self) -> &Vec<NetworkInfo> {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for NetworkList {
+    fn deref_mut(&mut self) -> &mut Vec<NetworkInfo> {
+        &mut self.0
+    }
+}
+
+// impl std::convert::From<Vec<NetworkInfo>> for NetworkList {
+//     fn from(v: Vec<NetworkInfo>) -> Self {
+// 	NetworkList{0: v}
+//     }
+// }
+
+pub enum CouldConnect {
+    Connect(ConnectionSetting),
+    Disconnect,
+    Rescan,
+    DoNothing,
+}

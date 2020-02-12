@@ -1,12 +1,5 @@
 use std::process::Command;
-use std::{
-    collections::VecDeque,
-    fs,
-    io::{self, Read, Write},
-    mem,
-    path::Path,
-    ptr, str,
-};
+use std::{collections::VecDeque, fs, io::Write, str};
 
 pub fn run(cmd: &str, err: bool) -> String {
     let output = Command::new("sh")
@@ -23,39 +16,6 @@ pub fn run(cmd: &str, err: bool) -> String {
             .expect("process returned bad output")
             .to_string()
     }
-}
-
-pub fn read_file(filename: &str) -> Result<String, io::Error> {
-    let file = fs::File::open(&filename);
-    if file.is_err() {
-        return Err(file.err().unwrap());
-    }
-    let mut data = String::new();
-    match file.unwrap().read_to_string(&mut data) {
-        Ok(_) => {
-            data.pop();
-            Ok(data)
-        }
-        Err(e) => Err(e),
-    }
-}
-
-pub fn signal(signal: i32, action: fn(i32)) {
-    unsafe {
-        let mut sigset = mem::uninitialized();
-        if libc::sigfillset(&mut sigset) != -1 {
-            let mut sigaction: libc::sigaction = mem::zeroed();
-            sigaction.sa_mask = sigset;
-            sigaction.sa_sigaction = action as usize;
-            libc::sigaction(signal, &sigaction, ptr::null_mut());
-        }
-    }
-}
-
-pub fn write_file(filename: &Path, data: &str) -> bool {
-    let dir = filename.parent().unwrap();
-    fs::create_dir_all(&dir).unwrap();
-    fs::write(filename, data).is_ok()
 }
 
 pub fn parse_essid(input: &str) -> Vec<u8> {
