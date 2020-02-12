@@ -47,75 +47,77 @@ fn main() -> Result<(), rustbus::client_conn::Error> {
         }
     });
 
-    // scanner thread
-    let mut c = connection.clone();
-    thread::spawn(move || loop {
-        if let Ok(_) = scan_recv.recv() {
-            c.scan();
-        }
-    });
-
-    // connection/monitor thread
-    c = connection.clone();
-    let auto = auto_connect.clone();
-    let known = known_networks.clone();
-    let proxy_count = tracker.active_proxies_counter();
-    thread::spawn(move || {
-        let scan_iter = NETWORK_SCAN_INTERVAL / NETWORK_CHECK_INTERVAL;
-        let mut iter = 0;
-        let doscan = || {
-            scan_sender.send(()).unwrap();
-            0
-        };
-
-        let last_message = || {
-            let mut msg = Err(());
-            while let Ok(r) = connect_recv.try_recv() {
-                msg = Ok(r);
+    let start_scanner = || {
+        let mut c = connection.clone();
+        thread::spawn(move || loop {
+            if let Ok(_) = scan_recv.recv() {
+                c.scan();
             }
-            return msg;
-        };
-        c.acquire();
-        c.scan();
+        });
+    };
 
-        loop {
-            if let Ok(setting) = last_message() {
-                if c.connect(setting) {
-                    auto.store(true, Ordering::SeqCst);
-                    iter = 0;
+    let start_monitor = || {
+        let mut c = connection.clone();
+        let auto = auto_connect.clone();
+        let known = known_networks.clone();
+        let proxy_count = tracker.active_proxies_counter();
+        thread::spawn(move || {
+            let scan_iter = NETWORK_SCAN_INTERVAL / NETWORK_CHECK_INTERVAL;
+            let mut iter = 0;
+            let doscan = || {
+                scan_sender.send(()).unwrap();
+                0
+            };
+
+            let last_message = || {
+                let mut msg = Err(());
+                while let Ok(r) = connect_recv.try_recv() {
+                    msg = Ok(r);
                 }
-            } else {
-                if auto.load(Ordering::SeqCst) {
-                    let result = c.auto_connect_possible(&known.lock().unwrap());
-                    match result {
-                        CouldConnect::Connect(setting) => {
-                            if c.connect(setting) {
-                                auto.store(true, Ordering::SeqCst);
-                            } else {
-                                c.disconnect();
+                return msg;
+            };
+            c.acquire();
+            c.scan();
+
+            loop {
+                if let Ok(setting) = last_message() {
+                    if c.connect(setting) {
+                        auto.store(true, Ordering::SeqCst);
+                        iter = 0;
+                    }
+                } else {
+                    if auto.load(Ordering::SeqCst) {
+                        let result = c.auto_connect_possible(&known.lock().unwrap());
+                        match result {
+                            CouldConnect::Connect(setting) => {
+                                if c.connect(setting) {
+                                    auto.store(true, Ordering::SeqCst);
+                                } else {
+                                    c.disconnect();
+                                }
                             }
-                        }
-                        CouldConnect::Disconnect => {
-                            c.disconnect();
-                            iter = doscan();
-                        }
-                        CouldConnect::Rescan => {
-                            if iter >= scan_iter {
+                            CouldConnect::Disconnect => {
+                                c.disconnect();
                                 iter = doscan();
                             }
+                            CouldConnect::Rescan => {
+                                if iter >= scan_iter {
+                                    iter = doscan();
+                                }
+                            }
+                            _ => {}
                         }
-                        _ => {}
                     }
+                    if proxy_count.load(Ordering::SeqCst) > 0 && iter >= scan_iter {
+                        iter = doscan();
+                    } else {
+                        iter += 1;
+                    }
+                    thread::sleep(time::Duration::from_secs(NETWORK_CHECK_INTERVAL));
                 }
-                if proxy_count.load(Ordering::SeqCst) > 0 && iter >= scan_iter {
-                    iter = doscan();
-                } else {
-                    iter += 1;
-                }
-                thread::sleep(time::Duration::from_secs(NETWORK_CHECK_INTERVAL));
             }
-        }
-    });
+        });
+    };
 
     let make_failed = |msg: Message, text: &str| {
         let mut reply = msg.make_error_response("org.freedesktop.DBus.Error.Failed".to_owned());
@@ -123,6 +125,8 @@ fn main() -> Result<(), rustbus::client_conn::Error> {
         Some(reply)
     };
 
+    start_scanner();
+    start_monitor();
     adapter.add_match("type='signal', path='/org/freedesktop/DBus', interface='org.freedesktop.DBus', member='NameOwnerChanged'")?;
     adapter.run(move |msg| {
         match msg.typ {
