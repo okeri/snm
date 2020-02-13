@@ -1,16 +1,16 @@
 use rustbus::message::{Base, Container, Param};
-
+use std::convert::{From, TryFrom};
 use super::connection::{
     ConnectionInfo, ConnectionSetting, ConnectionStatus, KnownNetwork, NetworkInfo, NetworkList,
 };
 
-impl std::convert::From<ConnectionStatus> for Vec<Param> {
+impl From<ConnectionStatus> for Vec<Param> {
     fn from(s: ConnectionStatus) -> Self {
         vec![(s as u32).into()]
     }
 }
 
-impl std::convert::From<ConnectionInfo> for Vec<Param> {
+impl From<ConnectionInfo> for Vec<Param> {
     fn from(s: ConnectionInfo) -> Self {
         vec![Container::Struct(match s {
             ConnectionInfo::NotConnected => vec![
@@ -53,7 +53,7 @@ impl std::convert::From<ConnectionInfo> for Vec<Param> {
     }
 }
 
-impl std::convert::From<&NetworkInfo> for Param {
+impl From<&NetworkInfo> for Param {
     fn from(network: &NetworkInfo) -> Self {
         match network {
             NetworkInfo::Ethernet => Container::Struct(vec![
@@ -74,7 +74,7 @@ impl std::convert::From<&NetworkInfo> for Param {
     }
 }
 
-impl std::convert::From<&KnownNetwork> for Vec<Param> {
+impl From<&KnownNetwork> for Vec<Param> {
     fn from(network: &KnownNetwork) -> Self {
         vec![
             network.password.clone().unwrap_or("".to_owned()).into(),
@@ -86,7 +86,7 @@ impl std::convert::From<&KnownNetwork> for Vec<Param> {
     }
 }
 
-impl std::convert::From<NetworkList> for Vec<Param> {
+impl From<NetworkList> for Vec<Param> {
     fn from(networks: NetworkList) -> Self {
         if networks.len() > 0 {
             vec![Container::Array(networks.iter().map(|network| network.into()).collect()).into()]
@@ -96,49 +96,9 @@ impl std::convert::From<NetworkList> for Vec<Param> {
     }
 }
 
-trait DBusConvert: Sized {
-    fn from_base(b: &Base) -> Result<Self, ()>;
-}
-
-impl DBusConvert for bool {
-    fn from_base(b: &Base) -> Result<bool, ()> {
-        if let Base::Boolean(value) = b {
-            return Ok(*value);
-        }
-        Err(())
-    }
-}
-
-impl DBusConvert for String {
-    fn from_base(b: &Base) -> Result<String, ()> {
-        if let Base::String(value) = b {
-            return Ok(value.clone());
-        }
-        Err(())
-    }
-}
-
-impl DBusConvert for u32 {
-    fn from_base(b: &Base) -> Result<u32, ()> {
-        if let Base::Uint32(value) = b {
-            return Ok(*value);
-        }
-        Err(())
-    }
-}
-
-impl DBusConvert for i32 {
-    fn from_base(b: &Base) -> Result<i32, ()> {
-        if let Base::Int32(value) = b {
-            return Ok(*value);
-        }
-        Err(())
-    }
-}
-
-fn dbus_convert<T: DBusConvert>(p: &Param) -> Result<T, ()> {
-    if let Param::Base(base) = p {
-        return T::from_base(base);
+fn dbus_convert<'a, T: TryFrom<&'a Base>>(p: &'a Param) -> Result<T, ()> {
+    if let Param::Base(ref base) = p {
+        return T::try_from(base).map_err(|_| ());
     }
     Err(())
 }
