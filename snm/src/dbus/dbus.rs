@@ -10,8 +10,11 @@ use std::sync::{
 };
 
 use rustbus::{
-    auth, client_conn::Error, get_session_bus_path, get_system_bus_path, marshal, message,
-    standard_messages, unmarshal, MessageBuilder, MessageType,
+    auth,
+    client_conn::Error,
+    get_session_bus_path, get_system_bus_path, message, standard_messages,
+    wire::{marshal, unmarshal, util},
+    MessageBuilder, MessageType,
 };
 
 use nix::sys::socket::{recvmsg, sendmsg, ControlMessage, ControlMessageOwned, MsgFlags};
@@ -108,8 +111,8 @@ impl BasicConnection {
         let mut header_fields_len = [0u8; 4];
         self.stream.read_exact(&mut header_fields_len[..])?;
         let (_, header_fields_len) =
-            unmarshal::parse_u32(&header_fields_len.to_vec(), header.byteorder)?;
-        marshal::write_u32(header_fields_len, header.byteorder, &mut self.msg_buf_in);
+            util::parse_u32(&header_fields_len.to_vec(), header.byteorder)?;
+        util::write_u32(header_fields_len, header.byteorder, &mut self.msg_buf_in);
 
         let complete_header_size = unmarshal::HEADER_LEN + header_fields_len as usize + 4; // +4 because the length of the header fields does not count
 

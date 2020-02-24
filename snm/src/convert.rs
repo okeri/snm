@@ -1,8 +1,8 @@
-use rustbus::message::{Base, Container, Param};
-use std::convert::{From, TryFrom};
 use super::connection::{
     ConnectionInfo, ConnectionSetting, ConnectionStatus, KnownNetwork, NetworkInfo, NetworkList,
 };
+use rustbus::message::{Base, Container, Param};
+use std::convert::{From, TryFrom};
 
 impl From<ConnectionStatus> for Vec<Param> {
     fn from(s: ConnectionStatus) -> Self {
@@ -88,11 +88,12 @@ impl From<&KnownNetwork> for Vec<Param> {
 
 impl From<NetworkList> for Vec<Param> {
     fn from(networks: NetworkList) -> Self {
-        if networks.len() > 0 {
-            vec![Container::Array(networks.iter().map(|network| network.into()).collect()).into()]
-        } else {
-            vec![]
-        }
+        vec![Container::make_array(
+            "(usbu)",
+            networks.iter().map(|network| network.into()).collect(),
+        )
+        .unwrap()
+        .into()]
     }
 }
 
