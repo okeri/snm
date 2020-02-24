@@ -1,27 +1,96 @@
 use super::support;
 use super::types::ConnectionSetting;
-use std::{fs, path::Path};
+use std::collections::HashSet;
+use std::{fmt, fs, path::Path};
+
+#[derive(Hash, Eq, PartialEq, Clone)]
+pub struct Interface(String);
+
+impl Interface {
+    pub fn new(name: &str) -> Self {
+        Interface { 0: name.to_owned() }
+    }
+
+    pub fn disconnect(&self) {
+        support::run(&format!("dhcpcd -k {}", self.0), false);
+        support::run(&format!("ip addr flush dev {}", self.0), false);
+        support::run(
+            &format!("wpa_cli -i {} -p /var/run/wpa terminate", self.0),
+            false,
+        );
+    }
+
+    pub fn scan(&self) -> String {
+        if self.valid() {
+            support::run(&format!("iw dev {} scan", self.0), false)
+        } else {
+            "".to_owned()
+        }
+    }
+
+    pub fn up(&self) {
+        if self.valid() {
+            support::run(&format!("ip l set {} up", self.0), false);
+        }
+    }
+
+    pub fn down(&self) {
+        if self.valid() {
+            support::run(&format!("ip l set {} down", self.0), false);
+        }
+    }
+
+    pub fn is_plugged_in(&self) -> bool {
+        if self.valid() {
+            let filename = format!("/sys/class/net/{}/carrier", self.0);
+            if let Ok(value) = fs::read_to_string(&filename) {
+                return value == "1\n";
+            }
+        }
+        false
+    }
+
+    pub fn is_up(&self) -> bool {
+        if self.valid() {
+            let filename = format!("/sys/class/net/{}/operstate", self.0);
+            if let Ok(value) = fs::read_to_string(&filename) {
+                return value == "on\n";
+            }
+        }
+        false
+    }
+
+    fn valid(&self) -> bool {
+        !self.0.is_empty()
+    }
+}
+
+impl fmt::Display for Interface {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 #[derive(Clone)]
 pub struct Interfaces {
-    eth: String,
-    wlan: String,
+    eth_ifaces: HashSet<Interface>,
+    wlan_ifaces: HashSet<Interface>,
 }
 
 impl Interfaces {
     pub fn new() -> Interfaces {
         let mut result = Interfaces {
-            eth: "".to_string(),
-            wlan: "".to_string(),
+            eth_ifaces: HashSet::new(),
+            wlan_ifaces: HashSet::new(),
         };
         result.detect();
         result
     }
 
-    pub fn from_setting(&self, setting: &ConnectionSetting) -> String {
+    pub fn from_setting(&self, setting: &ConnectionSetting) -> Option<Interface> {
         match *setting {
-            ConnectionSetting::Ethernet => self.eth.clone(),
-            _ => self.wlan.clone(),
+            ConnectionSetting::Ethernet => self.eth(),
+            _ => self.wlan(),
         }
     }
 
@@ -29,20 +98,23 @@ impl Interfaces {
         for entry in fs::read_dir(&Path::new("/sys/class/net")).expect("no sysfs entry") {
             if let Ok(entry) = entry {
                 let path = entry.file_name();
-                if let Some(iface) = path.to_str() {
-                    if let Some(sym) = iface.chars().next() {
+                if let Some(iface_name) = path.to_str() {
+                    if let Some(sym) = iface_name.chars().next() {
                         match sym {
                             'e' => {
-                                if self.eth.is_empty() {
-                                    println!("Detected ethernet interface: {}", iface);
+				let iface = Interface::new(iface_name);
+                                if self.eth_ifaces.contains(&iface) {
+                                    println!("Detected ethernet interface: {}", iface_name);
+				    iface.up();
+				    self.eth_ifaces.insert(iface);
                                 }
-                                self.eth = iface.to_string();
                             }
                             'w' => {
-                                if self.wlan.is_empty() {
-                                    println!("Detected wifi interface: {}", iface);
+				let iface = Interface::new(iface_name);
+                                if self.wlan_ifaces.contains(&iface) {
+                                    println!("Detected wifi interface: {}", iface_name);
+				    self.wlan_ifaces.insert(iface);
                                 }
-                                self.wlan = iface.to_string();
                             }
                             _ => {}
                         }
@@ -50,68 +122,38 @@ impl Interfaces {
                 }
             }
         }
-        self.wlan_up();
-        self.eth_up();
-    }
-
-    pub fn get_wlan(&self) -> Option<&str> {
-        if self.wlan.is_empty() {
-            None
-        } else {
-            Some(&self.wlan)
-        }
     }
 
     pub fn disconnect(&self) {
-        let disconnect_iface = |ref iface| {
-            support::run(&format!("dhcpcd -k {}", iface), false);
-            support::run(&format!("ip addr flush dev {}", iface), false);
-            support::run(
-                &format!("wpa_cli -i {} -p /var/run/wpa terminate", iface),
-                false,
-            );
-        };
-        disconnect_iface(&self.eth);
-        disconnect_iface(&self.wlan);
-        support::run("dhcpcd -x", false);
-    }
-
-    pub fn wlan_scan(&self) -> String {
-        support::run(&format!("iw dev {} scan", self.wlan), false)
-    }
-
-    pub fn up(iface: &str) {
-        support::run(&format!("ip l set {} up", iface), false);
-    }
-
-    pub fn wlan_up(&self) {
-        Self::up(&self.wlan);
-    }
-
-    pub fn eth_up(&self) {
-        Self::up(&self.eth);
-    }
-
-    pub fn eth_plugged_in(&self) -> bool {
-        if !self.eth.is_empty() {
-            return Self::plugged_in(&self.eth);
+        for iface in self.eth_ifaces.iter() {
+            iface.disconnect();
         }
-        false
-    }
-
-    pub fn wlan_plugged_in(&self) -> bool {
-        if !self.wlan.is_empty() {
-            return Self::plugged_in(&self.wlan);
+        for iface in self.wlan_ifaces.iter() {
+            iface.disconnect();
         }
-        false
     }
 
-    pub fn plugged_in(iface: &str) -> bool {
-        let filename = format!("/sys/class/net/{}/operstate", iface);
-        if let Ok(value) = fs::read_to_string(&filename) {
-            value == "up\n"
-        } else {
-            false
+    pub fn eth(&self) -> Option<Interface> {
+        Self::most_used_iface(&self.eth_ifaces)
+    }
+
+    pub fn wlan(&self) -> Option<Interface> {
+        Self::most_used_iface(&self.wlan_ifaces)
+    }
+
+    fn most_used_iface(ifaces: &HashSet<Interface>) -> Option<Interface> {
+        match ifaces.len() {
+            0 => None,
+            1 => ifaces.iter().next().map(|e| e.clone()),
+            _ => {
+                if let Some(plugged) = ifaces.iter().find(|iface| iface.is_plugged_in()) {
+                    Some(plugged.clone())
+                } else if let Some(up) = ifaces.iter().find(|iface| iface.is_up()) {
+                    Some(up.clone())
+                } else {
+                    ifaces.iter().next().map(|e| e.clone())
+                }
+            }
         }
     }
 }

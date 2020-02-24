@@ -4,7 +4,7 @@ mod signalmsg;
 mod support;
 mod types;
 
-use interfaces::Interfaces;
+use interfaces::{Interface, Interfaces};
 use parsers::{parse, Parsers};
 pub use signalmsg::SignalMsg;
 pub use types::*;
@@ -37,7 +37,7 @@ impl<SignalHandler> Connection<SignalHandler>
 where
     SignalHandler: FnMut(SignalMsg),
 {
-    fn wait_for_auth(&self, iface: &str) -> bool {
+    fn wait_for_auth(&self, iface: &Interface) -> bool {
         let mut tries = 0;
         while tries < self.tries.load(Ordering::SeqCst) {
             let output = support::run(
@@ -150,100 +150,105 @@ where
     pub fn connect(&mut self, setting: ConnectionSetting) -> bool {
         self.tries.store(AUTH_MAX_TRIES, Ordering::SeqCst);
         let mut network = NetworkInfo::Ethernet;
-        let iface = self.ifaces.lock().unwrap().from_setting(&setting);
-
-        let connection = self.current.read().unwrap().clone();
-
-        if connection.active() {
-            self.disconnect();
-        }
-
-        match setting {
-            ConnectionSetting::Wifi { ref essid, .. }
-            | ConnectionSetting::OpenWifi { ref essid, .. } => {
-                self.change_state(ConnectionInfo::ConnectingWifi(essid.to_string()));
-                let network_found = self.get_network(essid);
-                if let Ok(found) = network_found {
-                    network = found;
-                } else {
-                    return false;
-                }
+        let if_iface = self.ifaces.lock().unwrap().from_setting(&setting);
+        if let Some(iface) = if_iface {
+            let connection = self.current.read().unwrap().clone();
+	    
+            if connection.active() {
+                self.disconnect();
             }
-            ConnectionSetting::Ethernet => {
-                self.change_state(ConnectionInfo::ConnectingEth);
-                if !Interfaces::plugged_in(&iface) {
-                    return false;
-                }
-            }
-        }
-        self.signal(SignalMsg::ConnectStatusChanged(
-            ConnectionStatus::Initializing,
-        ));
-
-        let wpa_config = Self::generate_wpa_config(&setting);
-        let erase_wpa_config = || {
-            if let Some(ref path) = wpa_config {
-                fs::remove_file(Path::new(path)).unwrap_or_default();
-            }
-        };
-
-        support::run(&format!("ip l set {} up", iface), false);
-
-        if self.aborted() {
-            erase_wpa_config();
-            return false;
-        }
-        let need_auth = setting.need_auth();
-        if let Some(ref c) = wpa_config {
-            if need_auth {
-                self.signal(SignalMsg::ConnectStatusChanged(
-                    ConnectionStatus::Authenticating,
-                ));
-            } else {
-                self.tries.store(ASSOC_MAX_TRIES, Ordering::SeqCst);
-                self.signal(SignalMsg::ConnectStatusChanged(
-                    ConnectionStatus::Connecting,
-                ));
-            }
-            support::run(
-                &format!(
-                    "wpa_supplicant -B -i{} -c{} -Dnl80211 -C/var/run/wpa",
-                    iface, c
-                ),
-                false,
-            );
-            if !self.wait_for_auth(&iface) {
-                if !self.aborted() {
-                    self.signal(SignalMsg::ConnectStatusChanged(if need_auth {
-                        ConnectionStatus::AuthFail
+	    
+            match setting {
+                ConnectionSetting::Wifi { ref essid, .. }
+                | ConnectionSetting::OpenWifi { ref essid, .. } => {
+                    self.change_state(ConnectionInfo::ConnectingWifi(essid.to_string()));
+		    iface.up();
+                    let network_found = self.get_network(essid);
+                    if let Ok(found) = network_found {
+                        network = found;
                     } else {
-                        ConnectionStatus::ConnectFail
-                    }));
+                        return false;
+                    }
                 }
+                ConnectionSetting::Ethernet => {
+                    self.change_state(ConnectionInfo::ConnectingEth);
+                    if !iface.is_plugged_in() {
+                        return false;
+                    }
+                }
+            }
+            self.signal(SignalMsg::ConnectStatusChanged(
+                ConnectionStatus::Initializing,
+            ));
+
+            let wpa_config = Self::generate_wpa_config(&setting);
+            let erase_wpa_config = || {
+                if let Some(ref path) = wpa_config {
+                    fs::remove_file(Path::new(path)).unwrap_or_default();
+                }
+            };
+
+            if self.aborted() {
                 erase_wpa_config();
                 return false;
             }
-        }
-        self.signal(SignalMsg::ConnectStatusChanged(ConnectionStatus::GettingIP));
-        let output = support::run(&format!("dhcpcd -4 -i {}", iface), true);
-        if let Some(ref caps) = parse(Parsers::Ip, &output) {
-            let info = match setting {
-                ConnectionSetting::Ethernet => ConnectionInfo::Ethernet(caps[1].to_string()),
-
-                ConnectionSetting::Wifi { essid, .. }
-                | ConnectionSetting::OpenWifi { essid, .. } => {
-                    if let NetworkInfo::Wifi(_, ref quality, ref enc) = network {
-                        ConnectionInfo::Wifi(essid.to_string(), *quality, *enc, caps[1].to_string())
-                    } else {
-                        ConnectionInfo::NotConnected
-                    }
+            let need_auth = setting.need_auth();
+            if let Some(ref c) = wpa_config {
+                if need_auth {
+                    self.signal(SignalMsg::ConnectStatusChanged(
+                        ConnectionStatus::Authenticating,
+                    ));
+                } else {
+                    self.tries.store(ASSOC_MAX_TRIES, Ordering::SeqCst);
+                    self.signal(SignalMsg::ConnectStatusChanged(
+                        ConnectionStatus::Connecting,
+                    ));
                 }
-            };
+                support::run(
+                    &format!(
+                        "wpa_supplicant -B -i{} -c{} -Dnl80211 -C/var/run/wpa",
+                        iface, c
+                    ),
+                    false,
+                );
+                if !self.wait_for_auth(&iface) {
+                    if !self.aborted() {
+                        self.signal(SignalMsg::ConnectStatusChanged(if need_auth {
+                            ConnectionStatus::AuthFail
+                        } else {
+                            ConnectionStatus::ConnectFail
+                        }));
+                    }
+                    erase_wpa_config();
+                    return false;
+                }
+            }
+            self.signal(SignalMsg::ConnectStatusChanged(ConnectionStatus::GettingIP));
+            let output = support::run(&format!("dhcpcd -4 -i {}", iface), true);
+            if let Some(ref caps) = parse(Parsers::Ip, &output) {
+                let info = match setting {
+                    ConnectionSetting::Ethernet => ConnectionInfo::Ethernet(caps[1].to_string()),
+
+                    ConnectionSetting::Wifi { essid, .. }
+                    | ConnectionSetting::OpenWifi { essid, .. } => {
+                        if let NetworkInfo::Wifi(_, ref quality, ref enc) = network {
+                            ConnectionInfo::Wifi(
+                                essid.to_string(),
+                                *quality,
+                                *enc,
+                                caps[1].to_string(),
+                            )
+                        } else {
+                            ConnectionInfo::NotConnected
+                        }
+                    }
+                };
+                erase_wpa_config();
+                self.change_state(info);
+                return true;
+            }
             erase_wpa_config();
-            self.change_state(info);
-            return true;
         }
-        erase_wpa_config();
         false
     }
 
@@ -255,6 +260,7 @@ where
         self.tries.store(0, Ordering::SeqCst);
         if let Ok(ifaces) = self.ifaces.lock() {
             ifaces.disconnect();
+	    support::run("dhcpcd -x", false);
         }
         self.change_state(ConnectionInfo::NotConnected);
     }
@@ -262,10 +268,11 @@ where
     pub fn auto_connect_possible(&mut self, known_networks: &KnownNetworks) -> CouldConnect {
         let mut eth_plugged_in = false;
         let mut wifi_plugged_in = false;
+
         if let Ok(mut ifaces) = self.ifaces.lock() {
             ifaces.detect();
-            eth_plugged_in = ifaces.eth_plugged_in();
-            wifi_plugged_in = ifaces.wlan_plugged_in();
+            eth_plugged_in = ifaces.eth().map_or(false, |eth| eth.is_plugged_in());
+            wifi_plugged_in = ifaces.wlan().map_or(false, |wlan| wlan.is_plugged_in());
         }
 
         let add_phantom_eth = || {
@@ -372,17 +379,22 @@ where
         let mut networks = NetworkList::new();
 
         let ifaces = self.ifaces.lock().unwrap().clone();
-        if ifaces.eth_plugged_in() {
-            networks.push(NetworkInfo::Ethernet);
+        if let Some(eth) = ifaces.eth() {
+            if eth.is_plugged_in() {
+                networks.push(NetworkInfo::Ethernet);
+            }
         }
-
-        if let Some(wlan) = ifaces.get_wlan() {
-            let down = ifaces.wlan_plugged_in();
+        if let Some(wlan) = ifaces.wlan() {
+            let down = wlan.is_plugged_in();
             if down {
-                ifaces.wlan_up();
+                wlan.up();
             }
 
-            let output = ifaces.wlan_scan();
+            let output = wlan.scan();
+
+            if down {
+                wlan.down();
+            }
 
             let mut quality: u32;
             let mut essid: String;
