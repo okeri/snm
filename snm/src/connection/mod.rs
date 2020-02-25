@@ -153,16 +153,16 @@ where
         let if_iface = self.ifaces.lock().unwrap().from_setting(&setting);
         if let Some(iface) = if_iface {
             let connection = self.current.read().unwrap().clone();
-	    
+
             if connection.active() {
                 self.disconnect();
             }
-	    
+
             match setting {
                 ConnectionSetting::Wifi { ref essid, .. }
                 | ConnectionSetting::OpenWifi { ref essid, .. } => {
                     self.change_state(ConnectionInfo::ConnectingWifi(essid.to_string()));
-		    iface.up();
+                    iface.up();
                     let network_found = self.get_network(essid);
                     if let Ok(found) = network_found {
                         network = found;
@@ -260,7 +260,7 @@ where
         self.tries.store(0, Ordering::SeqCst);
         if let Ok(ifaces) = self.ifaces.lock() {
             ifaces.disconnect();
-	    support::run("dhcpcd -x", false);
+            support::run("dhcpcd -x", false);
         }
         self.change_state(ConnectionInfo::NotConnected);
     }
