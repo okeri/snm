@@ -102,18 +102,18 @@ impl Interfaces {
                     if let Some(sym) = iface_name.chars().next() {
                         match sym {
                             'e' => {
-				let iface = Interface::new(iface_name);
-                                if self.eth_ifaces.contains(&iface) {
+                                let iface = Interface::new(iface_name);
+                                if !self.eth_ifaces.contains(&iface) {
                                     println!("Detected ethernet interface: {}", iface_name);
-				    iface.up();
-				    self.eth_ifaces.insert(iface);
+                                    iface.up();
+                                    self.eth_ifaces.insert(iface);
                                 }
                             }
                             'w' => {
-				let iface = Interface::new(iface_name);
-                                if self.wlan_ifaces.contains(&iface) {
+                                let iface = Interface::new(iface_name);
+                                if !self.wlan_ifaces.contains(&iface) {
                                     println!("Detected wifi interface: {}", iface_name);
-				    self.wlan_ifaces.insert(iface);
+                                    self.wlan_ifaces.insert(iface);
                                 }
                             }
                             _ => {}
