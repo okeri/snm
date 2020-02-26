@@ -129,8 +129,8 @@ impl Convert for ConnectionSetting {
                                 return Ok(ConnectionSetting::Ethernet);
                             }
                             2 => {
-                                let essid = dbus_convert::<String>(&params[1])?;
-                                let enc = dbus_convert::<bool>(&params[2])?;
+                                let essid = dbus_convert::<String>(&p[1])?;
+                                let enc = dbus_convert::<bool>(&p[2])?;
                                 return if enc {
                                     Ok(ConnectionSetting::Wifi {
                                         essid,
