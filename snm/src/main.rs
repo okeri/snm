@@ -139,7 +139,7 @@ fn main() -> Result<(), rustbus::client_conn::Error> {
                             tracker.start_track(&msg);
                         }
                         "connect" => {
-                            if connection.allow_reconnect() {
+                            if !connection.allow_reconnect() {
                                 return make_failed(msg, "Reconnect is not alowed");
                             }
                             if connection.current_state().connecting() {
