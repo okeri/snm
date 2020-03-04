@@ -10,7 +10,7 @@ mod convert;
 mod dbus;
 
 use connection::{Connection, ConnectionSetting, CouldConnect, KnownNetwork, SignalMsg};
-use rustbus::{standard_messages, Message, MessageType};
+use rustbus::{message::Message, standard_messages, MessageType};
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -119,12 +119,6 @@ fn main() -> Result<(), rustbus::client_conn::Error> {
         });
     };
 
-    let make_failed = |msg: Message, text: &str| {
-        let mut reply = msg.make_error_response("org.freedesktop.DBus.Error.Failed".to_owned());
-        reply.push_params(vec![text.to_owned().into()]);
-        Some(reply)
-    };
-
     start_scanner();
     start_monitor();
     adapter.add_match("type='signal', path='/org/freedesktop/DBus', interface='org.freedesktop.DBus', member='NameOwnerChanged'")?;
@@ -199,7 +193,7 @@ fn main() -> Result<(), rustbus::client_conn::Error> {
                                         known.remove(&essid);
                                     }
                                     if config::write_networks(&known).is_err() {
-                                        return make_failed(msg, "cannot write config");
+                                        return make_failed(msg, "Cannot write config");
                                     }
                                 }
                             } else {
@@ -208,7 +202,7 @@ fn main() -> Result<(), rustbus::client_conn::Error> {
                         }
                         "Introspect" => {
                             let xml = include_str!("../xml/snm.xml").to_owned();
-                            reply.push_params(vec![xml.into()]);
+                            reply.push_params(vec![xml]);
                         }
                         _ => {
                             return Some(standard_messages::unknown_method(&msg));
@@ -226,4 +220,12 @@ fn main() -> Result<(), rustbus::client_conn::Error> {
         }
         None
     })
+}
+
+fn make_failed<'a, 'e>(msg: Message<'a, 'e>, text: &str) -> Option<Message<'a, 'e>> {
+    let reply = msg.make_error_response(
+        "org.freedesktop.DBus.Error.Failed".to_owned(),
+        Some(text.to_owned()),
+    );
+    Some(reply)
 }

@@ -12,7 +12,9 @@ use std::sync::{
 use rustbus::{
     auth,
     client_conn::Error,
-    get_session_bus_path, get_system_bus_path, message, standard_messages,
+    get_session_bus_path, get_system_bus_path, message,
+    params::Param,
+    standard_messages,
     wire::{marshal, unmarshal, util},
     MessageBuilder, MessageType,
 };
@@ -48,7 +50,7 @@ impl Clone for BasicConnection {
 
 type Result<T> = std::result::Result<T, Error>;
 
-impl BasicConnection {
+impl<'a, 'e> BasicConnection {
     pub fn connect_to_bus(path: PathBuf) -> Result<BasicConnection> {
         let mut stream = UnixStream::connect(&path)?;
         match auth::do_auth(&mut stream)? {
@@ -84,7 +86,11 @@ impl BasicConnection {
             &[iovec],
             Some(&mut cmsgspace),
             flags,
-        )?;
+        )
+        .map_err(|e| match e.as_errno() {
+            Some(nix::errno::Errno::EAGAIN) => Error::TimedOut,
+            _ => Error::NixError(e),
+        })?;
         let cmsgs = msg.cmsgs().collect();
 
         self.msg_buf_in
@@ -93,7 +99,7 @@ impl BasicConnection {
     }
 
     /// Blocks until a message has been read from the conn
-    pub fn get_next_message(&mut self) -> Result<message::Message> {
+    pub fn get_next_message(&mut self) -> Result<message::Message<'a, 'e>> {
         // This whole dance around reading exact amounts of bytes is necessary to read messages exactly at their bounds.
         // I think thats necessary so we can later add support for unixfd sending
         let mut cmsgs = Vec::new();
@@ -157,7 +163,7 @@ impl BasicConnection {
         Ok(msg)
     }
 
-    pub fn send_message(&mut self, mut msg: message::Message) -> Result<message::Message> {
+    pub fn send_message(&mut self, mut msg: message::Message<'a, 'e>) -> Result<u32> {
         self.msg_buf_out.clear();
         if msg.serial.is_none() {
             msg.serial = Some(self.serial_counter.fetch_add(1, Ordering::SeqCst));
@@ -179,7 +185,7 @@ impl BasicConnection {
             None,
         )?;
         assert_eq!(l, self.msg_buf_out.len());
-        Ok(msg)
+        msg.serial.ok_or(Error::TimedOut)
     }
 }
 
@@ -190,8 +196,8 @@ pub struct Emitter {
     object: String,
 }
 
-impl Emitter {
-    pub fn emit(&mut self, member: &str, args: Vec<message::Param>) -> Result<message::Message> {
+impl<'a, 'e> Emitter {
+    pub fn emit(&mut self, member: &str, args: Vec<Param>) -> Result<u32> {
         let sig = MessageBuilder::new()
             .signal(self.iface.clone(), member.into(), self.object.clone())
             .with_params(args)
@@ -234,7 +240,7 @@ impl DBusLoop {
 
     pub fn run<Handler>(&mut self, mut handler: Handler) -> Result<()>
     where
-        Handler: FnMut(message::Message) -> Option<message::Message>,
+        Handler: for<'a, 'e> FnMut(message::Message<'a, 'e>) -> Option<message::Message<'a, 'e>>,
     {
         loop {
             let msg = self.connection.get_next_message()?;
@@ -250,12 +256,11 @@ impl DBusLoop {
             .map(|_| ())
     }
 
-    fn send_message_blocking(
+    fn send_message_blocking<'a, 'e>(
         connection: &mut BasicConnection,
-        msg: message::Message,
-    ) -> Result<message::Message> {
-        let sent = connection.send_message(msg)?;
-        let serial = sent.serial.unwrap();
+        msg: message::Message<'a, 'e>,
+    ) -> Result<message::Message<'a, 'e>> {
+        let serial = connection.send_message(msg)?;
         loop {
             let msg = connection.get_next_message()?;
             if let MessageType::Reply = msg.typ {

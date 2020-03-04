@@ -1,28 +1,29 @@
 use super::connection::{
     ConnectionInfo, ConnectionSetting, ConnectionStatus, KnownNetwork, NetworkInfo, NetworkList,
 };
-use rustbus::message::{Base, Container, Param};
+use core::iter::FromIterator;
+use rustbus::params::{Base, Container, Param};
 use std::convert::{From, TryFrom};
 
-impl From<ConnectionStatus> for Vec<Param> {
+impl<'a, 'e> From<ConnectionStatus> for Vec<Param<'a, 'e>> {
     fn from(s: ConnectionStatus) -> Self {
         vec![(s as u32).into()]
     }
 }
 
-impl From<ConnectionInfo> for Vec<Param> {
+impl<'a, 'e> From<ConnectionInfo> for Vec<Param<'a, 'e>> {
     fn from(s: ConnectionInfo) -> Self {
         vec![Container::Struct(match s {
             ConnectionInfo::NotConnected => vec![
                 (0 as u32).into(),
-                "".to_owned().into(),
+                "".into(),
                 false.into(),
                 (0 as u32).into(),
-                "".to_owned().into(),
+                "".into(),
             ],
             ConnectionInfo::Ethernet(ip) => vec![
                 (1 as u32).into(),
-                "Ethernet connection".to_owned().into(),
+                "Ethernet connection".into(),
                 false.into(),
                 (100 as u32).into(),
                 ip.into(),
@@ -36,24 +37,24 @@ impl From<ConnectionInfo> for Vec<Param> {
             ],
             ConnectionInfo::ConnectingEth => vec![
                 (3 as u32).into(),
-                "".to_owned().into(),
+                "".into(),
                 false.into(),
                 (0 as u32).into(),
-                "".to_owned().into(),
+                "".into(),
             ],
             ConnectionInfo::ConnectingWifi(essid) => vec![
                 (4 as u32).into(),
                 essid.into(),
                 false.into(),
                 (0 as u32).into(),
-                "".to_owned().into(),
+                "".into(),
             ],
         })
         .into()]
     }
 }
 
-impl From<&NetworkInfo> for Param {
+impl<'a, 'e> From<&NetworkInfo> for Param<'a, 'e> {
     fn from(network: &NetworkInfo) -> Self {
         match network {
             NetworkInfo::Ethernet => Container::Struct(vec![
@@ -74,7 +75,17 @@ impl From<&NetworkInfo> for Param {
     }
 }
 
-impl From<&KnownNetwork> for Vec<Param> {
+impl<'a, 'e> FromIterator<NetworkInfo> for Vec<Param<'a, 'e>> {
+    fn from_iter<I: IntoIterator<Item = NetworkInfo>>(networks: I) -> Self {
+        let mut params: Vec<Param> = Vec::new();
+        for n in networks {
+            params.push((&n).into());
+        }
+        params
+    }
+}
+
+impl<'a, 'e> From<&KnownNetwork> for Vec<Param<'a, 'e>> {
     fn from(network: &KnownNetwork) -> Self {
         vec![
             network.password.clone().unwrap_or("".to_owned()).into(),
@@ -86,18 +97,19 @@ impl From<&KnownNetwork> for Vec<Param> {
     }
 }
 
-impl From<NetworkList> for Vec<Param> {
-    fn from(networks: NetworkList) -> Self {
-        vec![Container::make_array(
-            "(usbu)",
-            networks.iter().map(|network| network.into()).collect(),
-        )
-        .unwrap()
-        .into()]
+impl<'a, 'e> From<NetworkList> for Vec<Param<'a, 'e>> {
+    fn from(nl: NetworkList) -> Self {
+        let networks: Self = nl
+            .iter()
+            .map::<Param, _>(|network| network.into())
+            .collect();
+        vec![Container::make_array("(usbu)", &mut networks.into_iter())
+            .unwrap()
+            .into()]
     }
 }
 
-fn dbus_convert<'a, T: TryFrom<&'a Base>>(p: &'a Param) -> Result<T, ()> {
+fn dbus_convert<'a, 'e, T: TryFrom<&'a Base<'a>>>(p: &'a Param<'a, 'e>) -> Result<T, ()> {
     if let Param::Base(ref base) = p {
         return T::try_from(base).map_err(|_| ());
     }

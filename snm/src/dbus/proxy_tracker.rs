@@ -1,4 +1,4 @@
-use rustbus::{message::Base, message::Param, Message};
+use rustbus::{params::Base, params::Param, Message};
 
 use std::collections::HashSet;
 use std::sync::{
