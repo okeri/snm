@@ -175,6 +175,9 @@ where
                     if !iface.is_plugged_in() {
                         return false;
                     }
+                    if let Some(wlan) = self.ifaces.lock().unwrap().wlan() {
+                        wlan.down();
+                    }
                 }
             }
             self.signal(SignalMsg::ConnectStatusChanged(
@@ -275,62 +278,39 @@ where
             wifi_plugged_in = ifaces.wlan().map_or(false, |wlan| wlan.is_plugged_in());
         }
 
-        let add_phantom_eth = || {
-            let mut networks = self.networks.lock().unwrap();
-            if networks.len() > 0 {
-                if let NetworkInfo::Wifi(..) = networks[0] {
-                    networks.insert(0, NetworkInfo::Ethernet);
-                    return Some(networks.clone());
-                }
+        let add_phantom_eth = |networks: &mut NetworkList| {
+            if networks.len() == 0 || !networks[0].is_eth() {
+                networks.insert(0, NetworkInfo::Ethernet);
+                true
+            } else {
+                false
             }
-            None
         };
 
-        let remove_phantom_eth = || {
-            let mut networks = self.networks.lock().unwrap();
-            if networks.len() > 0 {
-                if let NetworkInfo::Ethernet = networks[0] {
-                    networks.remove(0);
-                    return Some(networks.clone());
-                }
+        let empty_networks = |add_eth: bool| {
+            let mut networks = NetworkList::new();
+            if add_eth {
+                add_phantom_eth(&mut networks);
             }
-            None
-        };
-
-        let remove_wlan_if_nonexists = |essid: &str| {
-            let mut networks = self.networks.lock().unwrap();
-            let result = networks.iter().position(|x| {
-                return if let NetworkInfo::Wifi(name, ..) = x {
-                    name == essid
-                } else {
-                    false
-                };
-            });
-            if let Some(index) = result {
-                networks.remove(index);
-                return Some(networks.clone());
-            }
-            None
+            networks
         };
 
         let connection = self.current.read().unwrap().clone();
         match connection {
             ConnectionInfo::NotConnected => {
                 if eth_plugged_in {
-                    if let Some(networks) = add_phantom_eth() {
-                        self.signal(SignalMsg::NetworkList(networks));
-                    }
                     return CouldConnect::Connect(ConnectionSetting::Ethernet);
                 } else {
-                    let networks = self.networks.lock().unwrap();
-                    if networks.len() == 0 {
-                        return CouldConnect::Rescan;
-                    }
-                    for n in networks.iter() {
-                        if let NetworkInfo::Wifi(ref essid, ..) = n {
-                            if let Some(ref known) = known_networks.get(essid) {
-                                if known.auto {
-                                    return CouldConnect::Connect(known.to_setting(essid));
+                    if let Ok(networks) = self.networks.lock() {
+                        if networks.len() == 0 {
+                            return CouldConnect::Rescan;
+                        }
+                        for n in networks.iter() {
+                            if let NetworkInfo::Wifi(ref essid, ..) = n {
+                                if let Some(ref known) = known_networks.get(essid) {
+                                    if known.auto {
+                                        return CouldConnect::Connect(known.to_setting(essid));
+                                    }
                                 }
                             }
                         }
@@ -338,22 +318,31 @@ where
                 }
             }
 
-            ConnectionInfo::Wifi(ref essid, ..) => {
+            ConnectionInfo::Wifi(..) => {
                 if eth_plugged_in {
+                    let mut update: Option<NetworkList> = None;
+                    if let Ok(mut networks) = self.networks.lock() {
+                        if add_phantom_eth(&mut *networks) {
+                            update = Some(networks.clone());
+                        }
+                    }
+                    if let Some(up) = update {
+                        self.signal(SignalMsg::NetworkList(up));
+                    }
                     return CouldConnect::Connect(ConnectionSetting::Ethernet);
                 } else if !wifi_plugged_in {
-                    if let Some(networks) = remove_wlan_if_nonexists(essid) {
-                        self.signal(SignalMsg::NetworkList(networks));
-                    }
+                    let networks = empty_networks(false);
+                    self.signal(SignalMsg::NetworkList(networks.clone()));
+                    *self.networks.lock().unwrap() = networks;
                     return CouldConnect::Disconnect;
                 }
             }
 
             ConnectionInfo::Ethernet(_) => {
                 if !eth_plugged_in {
-                    if let Some(networks) = remove_phantom_eth() {
-                        self.signal(SignalMsg::NetworkList(networks));
-                    }
+                    let networks = empty_networks(false);
+                    self.signal(SignalMsg::NetworkList(networks.clone()));
+                    *self.networks.lock().unwrap() = networks;
                     return CouldConnect::Disconnect;
                 }
             }
@@ -384,8 +373,9 @@ where
                 networks.push(NetworkInfo::Ethernet);
             }
         }
+
         if let Some(wlan) = ifaces.wlan() {
-            let down = wlan.is_plugged_in();
+            let down = !wlan.is_up();
             if down {
                 wlan.up();
             }

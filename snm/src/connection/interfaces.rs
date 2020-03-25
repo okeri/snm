@@ -54,7 +54,7 @@ impl Interface {
         if self.valid() {
             let filename = format!("/sys/class/net/{}/operstate", self.0);
             if let Ok(value) = fs::read_to_string(&filename) {
-                return value == "on\n";
+                return value == "up\n";
             }
         }
         false

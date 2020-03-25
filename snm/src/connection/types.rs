@@ -136,6 +136,15 @@ pub enum NetworkInfo {
     Wifi(String, u32, bool),
 }
 
+impl NetworkInfo {
+    pub fn is_eth(&self) -> bool {
+        match self {
+            NetworkInfo::Ethernet => true,
+            _ => false,
+        }
+    }
+}
+
 impl Ord for NetworkInfo {
     fn cmp(&self, other: &NetworkInfo) -> Ordering {
         if let NetworkInfo::Wifi(ref essid1, ref quality1, _) = *self {
@@ -193,12 +202,6 @@ impl std::ops::DerefMut for NetworkList {
         &mut self.0
     }
 }
-
-// impl std::convert::From<Vec<NetworkInfo>> for NetworkList {
-//     fn from(v: Vec<NetworkInfo>) -> Self {
-// 	NetworkList{0: v}
-//     }
-// }
 
 pub enum CouldConnect {
     Connect(ConnectionSetting),
