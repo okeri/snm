@@ -22,7 +22,6 @@ const NETWORK_CHECK_INTERVAL: u64 = 2;
 const NETWORK_SCAN_INTERVAL: u64 = 14;
 
 fn main() -> Result<(), rustbus::client_conn::Error> {
-    let (scan_sender, scan_recv) = mpsc::channel::<()>();
     let (connect_sender, connect_recv) = mpsc::channel::<ConnectionSetting>();
     let mut adapter = dbus::DBusLoop::connect_to_bus(dbus::Bus::System, "com.github.okeri.snm")?;
     let mut emitter = adapter.new_emitter("/");
@@ -47,25 +46,17 @@ fn main() -> Result<(), rustbus::client_conn::Error> {
         }
     });
 
-    let start_scanner = || {
-        let mut c = connection.clone();
-        thread::spawn(move || loop {
-            if let Ok(_) = scan_recv.recv() {
-                c.scan();
-            }
-        });
-    };
-
     let start_monitor = || {
         let mut c = connection.clone();
+	let mut scan_c = connection.clone();
         let auto = auto_connect.clone();
         let known = known_networks.clone();
         let proxy_count = tracker.active_proxies_counter();
         thread::spawn(move || {
             let scan_iter = NETWORK_SCAN_INTERVAL / NETWORK_CHECK_INTERVAL;
             let mut iter = 0;
-            let doscan = || {
-                scan_sender.send(()).unwrap();
+            let mut doscan = || {
+                scan_c.scan();
                 0
             };
 
@@ -119,7 +110,6 @@ fn main() -> Result<(), rustbus::client_conn::Error> {
         });
     };
 
-    start_scanner();
     start_monitor();
     adapter.add_match("type='signal', path='/org/freedesktop/DBus', interface='org.freedesktop.DBus', member='NameOwnerChanged'")?;
     adapter.run(move |msg| {
