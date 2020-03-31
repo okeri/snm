@@ -23,7 +23,7 @@ class NetworkProps::Impl {
 
   public:
     explicit Impl(WINDOW* w) : win_(w) {
-        fields_.emplace_back(new_field(1, 16, 5, 15, 0, 0));
+        fields_.emplace_back(new_field(1, 16, 5, 15, 1, 0));
         fields_.emplace_back(new_field(1, 3, 7, 15, 0, 0));
         for (auto& field : fields_) {
             set_field_back(field, A_UNDERLINE);
