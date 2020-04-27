@@ -8,11 +8,9 @@ class DBusLoop {
     std::thread dispatcherThread_;
 
     static DBus::BusDispatcher dispatcher_;
+
   public:
-    enum class Bus {
-        System,
-        Session
-    };
+    enum class Bus { System, Session };
 
     DBusLoop();
     ~DBusLoop();
