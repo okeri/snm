@@ -1,6 +1,13 @@
 use super::support;
 use super::types::ConnectionSetting;
-use std::collections::HashSet;
+use smoltcp::dhcp::Dhcpv4Client;
+use smoltcp::iface::{EthernetInterfaceBuilder, NeighborCache, Routes};
+use smoltcp::phy::{wait, RawSocket};
+use smoltcp::socket::{RawPacketMetadata, RawSocketBuffer, SocketSet};
+use smoltcp::time::{Duration, Instant};
+use smoltcp::wire::{EthernetAddress, IpCidr, Ipv4Address, Ipv4Cidr};
+use std::collections::{BTreeMap, HashSet};
+use std::os::unix::io::AsRawFd;
 use std::{fmt, fs, path::Path};
 
 #[derive(Hash, Eq, PartialEq, Clone)]
@@ -12,8 +19,11 @@ impl Interface {
     }
 
     pub fn disconnect(&self) {
-        support::run(&format!("dhcpcd -k {}", self.0), false);
         support::run(&format!("ip addr flush dev {}", self.0), false);
+        support::run(
+            &format!("wpa_cli -i {} -p /var/run/wpa disconnect", self.0),
+            false,
+        );
         support::run(
             &format!("wpa_cli -i {} -p /var/run/wpa terminate", self.0),
             false,
@@ -62,6 +72,101 @@ impl Interface {
 
     fn valid(&self) -> bool {
         !self.0.is_empty()
+    }
+
+    fn set_addr(&mut self, addr: Ipv4Cidr) {
+        support::run(&format!("ip addr add {} dev {}", addr, self.0), false);
+    }
+
+    fn set_route(&mut self, route: Ipv4Address) {
+        support::run(
+            &format!("ip route add default via {} dev {}", route, self.0),
+            false,
+        );
+    }
+
+    fn set_dns(&mut self, dns: [Option<Ipv4Address>; 3]) {
+        use std::io::Write;
+        let mut resolv =
+            std::fs::File::create("/etc/resolv.conf").expect("cannot rewrite /etc/resolv.conf");
+        for dns_server in dns.iter().filter_map(|s| *s) {
+            writeln!(resolv, "nameserver {}\n", dns_server)
+                .expect("cannot write /etc/resolve.conf");
+        }
+    }
+
+    pub fn dhcp(&mut self) -> Result<String, ()> {
+        let mut result: Result<String, ()> = Err(());
+        if !self.valid() {
+            return result;
+        }
+        let mac = Self::detect_mac(&self.0).expect("cannot detect HW addr");
+
+        let device = RawSocket::new(&self.0).unwrap();
+        let fd = device.as_raw_fd();
+        let neighbor_cache = NeighborCache::new(BTreeMap::new());
+        let ip_addrs = [IpCidr::new(Ipv4Address::UNSPECIFIED.into(), 0)];
+        let mut routes_storage = [None; 1];
+        let routes = Routes::new(&mut routes_storage[..]);
+        let mut iface = EthernetInterfaceBuilder::new(device)
+            .ethernet_addr(mac)
+            .neighbor_cache(neighbor_cache)
+            .ip_addrs(ip_addrs)
+            .routes(routes)
+            .finalize();
+
+        let mut sockets = SocketSet::new(vec![]);
+        let dhcp_rx_buffer = RawSocketBuffer::new([RawPacketMetadata::EMPTY; 1], vec![0; 900]);
+        let dhcp_tx_buffer = RawSocketBuffer::new([RawPacketMetadata::EMPTY; 1], vec![0; 300]);
+
+        let mut dhcp =
+            Dhcpv4Client::new(&mut sockets, dhcp_rx_buffer, dhcp_tx_buffer, Instant::now());
+
+        let mut tries = 0;
+
+        let delay = Duration::from_millis(500);
+        while result.is_err() && tries < 10 {
+            let timestamp = Instant::now();
+
+            if iface.poll(&mut sockets, timestamp).is_ok() {
+                if let Ok(config) = dhcp.poll(&mut iface, &mut sockets, timestamp) {
+                    if let Some(config) = config {
+                        config.address.map(|cidr| {
+			    self.set_addr(cidr);
+			    result = Ok(cidr.address().to_string());
+                        });
+
+                        config.router.map(|router| {
+                            self.set_route(router);
+                        });
+			
+                        if config.dns_servers.iter().any(|s| s.is_some()) {
+                            self.set_dns(config.dns_servers);
+                        }
+                    }
+
+                    wait(fd, Some(delay)).unwrap_or(());
+                    tries += 1;
+                }
+            }
+        }
+        return result;
+    }
+
+    fn detect_mac(iface_name: &str) -> Result<EthernetAddress, ()> {
+        use nix::{ifaddrs::getifaddrs, sys::socket::SockAddr};
+        let ifaces = getifaddrs().map_err(|_| ())?;
+
+        for iface in ifaces {
+            if iface.interface_name == iface_name {
+                if let Some(addr) = iface.address {
+                    if let SockAddr::Link(link) = addr {
+                        return Ok(EthernetAddress(link.addr()));
+                    }
+                }
+            }
+        }
+        Err(())
     }
 }
 

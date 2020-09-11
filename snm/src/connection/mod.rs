@@ -151,7 +151,7 @@ where
         self.tries.store(AUTH_MAX_TRIES, Ordering::SeqCst);
         let mut network = NetworkInfo::Ethernet;
         let if_iface = self.ifaces.lock().unwrap().from_setting(&setting);
-        if let Some(iface) = if_iface {
+        if let Some(mut iface) = if_iface {
             let connection = self.current.read().unwrap().clone();
 
             if connection.active() {
@@ -227,20 +227,14 @@ where
                 }
             }
             self.signal(SignalMsg::ConnectStatusChanged(ConnectionStatus::GettingIP));
-            let output = support::run(&format!("dhcpcd -4 -i {}", iface), true);
-            if let Some(ref caps) = parse(Parsers::Ip, &output) {
+            if let Ok(ip) = iface.dhcp() {
                 let info = match setting {
-                    ConnectionSetting::Ethernet => ConnectionInfo::Ethernet(caps[1].to_string()),
+                    ConnectionSetting::Ethernet => ConnectionInfo::Ethernet(ip),
 
                     ConnectionSetting::Wifi { essid, .. }
                     | ConnectionSetting::OpenWifi { essid, .. } => {
                         if let NetworkInfo::Wifi(_, ref quality, ref enc) = network {
-                            ConnectionInfo::Wifi(
-                                essid.to_string(),
-                                *quality,
-                                *enc,
-                                caps[1].to_string(),
-                            )
+                            ConnectionInfo::Wifi(essid.to_string(), *quality, *enc, ip)
                         } else {
                             ConnectionInfo::NotConnected
                         }
@@ -263,7 +257,6 @@ where
         self.tries.store(0, Ordering::SeqCst);
         if let Ok(ifaces) = self.ifaces.lock() {
             ifaces.disconnect();
-            support::run("dhcpcd -x", false);
         }
         self.change_state(ConnectionInfo::NotConnected);
     }

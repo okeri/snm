@@ -1,6 +1,6 @@
 [package]
 name = "snm"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Oleg Keri <ezhi99@gmail.com>"]
 edition = "2018"
 
@@ -10,6 +10,7 @@ serde = "0.8.23"
 regex = "1.0.0"
 serde_derive = "0.8.23"
 toml = { version = "0.2", default-features = false, features = ["serde"] }
+smoltcp = { version = "*", features = ["proto-dhcpv4"] }
 rustbus = "0.2"
 nix = "0.17.0"
 ring = "*"
