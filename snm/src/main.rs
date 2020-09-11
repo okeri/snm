@@ -48,7 +48,7 @@ fn main() -> Result<(), rustbus::client_conn::Error> {
 
     let start_monitor = || {
         let mut c = connection.clone();
-	let mut scan_c = connection.clone();
+        let mut scan_c = connection.clone();
         let auto = auto_connect.clone();
         let known = known_networks.clone();
         let proxy_count = tracker.active_proxies_counter();
