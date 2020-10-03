@@ -9,7 +9,9 @@ mod connection;
 mod convert;
 mod dbus;
 
-use connection::{Connection, ConnectionSetting, CouldConnect, KnownNetwork, SignalMsg};
+use connection::{
+    Connection, ConnectionInfo, ConnectionSetting, CouldConnect, KnownNetwork, SignalMsg,
+};
 use rustbus::{message::Message, standard_messages, MessageType};
 
 use std::sync::{
@@ -67,8 +69,14 @@ fn main() -> Result<(), rustbus::client_conn::Error> {
                 }
                 return msg;
             };
+
             c.acquire();
-            c.scan();
+            match c.current_state() {
+                ConnectionInfo::NotConnected | ConnectionInfo::Wifi(_, _, _, _) => {
+                    c.scan();
+                }
+                _ => {}
+            }
 
             loop {
                 if let Ok(setting) = last_message() {

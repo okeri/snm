@@ -249,8 +249,22 @@ where
         false
     }
 
-    pub fn acquire(&self) {
-        // TODO: find already established connections
+    pub fn acquire(&mut self) {
+        let mut current = ConnectionInfo::NotConnected;
+        if let Ok(mut ifaces) = self.ifaces.lock() {
+            ifaces.detect();
+            if let Some(eth) = ifaces.eth() {
+                current = eth.eth_info();
+            } else if let Some(wlan) = ifaces.wlan() {
+                current = wlan.wlan_info();
+            }
+        }
+        match current {
+            ConnectionInfo::NotConnected => {}
+            _ => {
+                self.change_state(current);
+            }
+        }
     }
 
     pub fn disconnect(&mut self) {
@@ -347,17 +361,6 @@ where
     pub fn scan(&mut self) {
         use std::str;
 
-        let dbm2perc = |dbm: i32| -> u32 {
-            if dbm < -92 {
-                1
-            } else if dbm > -21 {
-                100
-            } else {
-                let x = dbm as f32;
-                ((-0.0154 * x * x) - (0.3794 * x) + 98.182).round() as u32
-            }
-        };
-
         let mut networks = NetworkList::new();
 
         let ifaces = self.ifaces.lock().unwrap().clone();
@@ -387,7 +390,7 @@ where
                 enc = true;
                 essid = "".to_string();
                 if let Some(ref caps) = parse(Parsers::NetworkQuality, chunk) {
-                    quality = dbm2perc(
+                    quality = support::dbm2perc(
                         caps.get(1)
                             .unwrap()
                             .as_str()

@@ -1,5 +1,7 @@
+use super::parsers::{parse, Parsers};
 use super::support;
-use super::types::ConnectionSetting;
+use super::types::{ConnectionInfo, ConnectionSetting};
+use nix::libc;
 use smoltcp::dhcp::Dhcpv4Client;
 use smoltcp::iface::{EthernetInterfaceBuilder, NeighborCache, Routes};
 use smoltcp::phy::{wait, RawSocket};
@@ -100,7 +102,7 @@ impl Interface {
         if !self.valid() {
             return result;
         }
-        let mac = Self::detect_mac(&self.0).expect("cannot detect HW addr");
+        let mac = self.detect_mac().expect("cannot detect HW addr");
 
         let device = RawSocket::new(&self.0).unwrap();
         let fd = device.as_raw_fd();
@@ -132,14 +134,14 @@ impl Interface {
                 if let Ok(config) = dhcp.poll(&mut iface, &mut sockets, timestamp) {
                     if let Some(config) = config {
                         config.address.map(|cidr| {
-			    self.set_addr(cidr);
-			    result = Ok(cidr.address().to_string());
+                            self.set_addr(cidr);
+                            result = Ok(cidr.address().to_string());
                         });
 
                         config.router.map(|router| {
                             self.set_route(router);
                         });
-			
+
                         if config.dns_servers.iter().any(|s| s.is_some()) {
                             self.set_dns(config.dns_servers);
                         }
@@ -153,12 +155,12 @@ impl Interface {
         return result;
     }
 
-    fn detect_mac(iface_name: &str) -> Result<EthernetAddress, ()> {
+    fn detect_mac(&self) -> Result<EthernetAddress, ()> {
         use nix::{ifaddrs::getifaddrs, sys::socket::SockAddr};
         let ifaces = getifaddrs().map_err(|_| ())?;
 
         for iface in ifaces {
-            if iface.interface_name == iface_name {
+            if iface.interface_name == self.0 {
                 if let Some(addr) = iface.address {
                     if let SockAddr::Link(link) = addr {
                         return Ok(EthernetAddress(link.addr()));
@@ -167,6 +169,52 @@ impl Interface {
             }
         }
         Err(())
+    }
+
+    fn detect_ip(&self) -> Option<String> {
+        let ok: bool;
+        let ifreq = ifreq_ip::new(&self.0);
+        unsafe {
+            let fd = libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0);
+            ok = libc::ioctl(fd, libc::SIOCGIFADDR, &ifreq) != -1;
+            libc::close(fd);
+        }
+        if ok {
+            let addr = ifreq.ifr_addr.sin_addr;
+            Some(format!("{}.{}.{}.{}", addr[0], addr[1], addr[2], addr[3]))
+        } else {
+            None
+        }
+    }
+
+    pub fn wlan_info(&self) -> ConnectionInfo {
+        use std::str;
+        let output = support::run(&format!("iw dev {} link", self.0), false);
+
+        if let Some(ref ecaps) = parse(Parsers::NetworkEssid, &output) {
+            if let Some(ip) = self.detect_ip() {
+                let parsed = support::parse_essid(ecaps.get(1).unwrap().as_str());
+                if let Ok(value) = str::from_utf8(&parsed) {
+                    let mut quality = 100;
+
+                    if let Some(ref caps) = parse(Parsers::NetworkQuality, &output) {
+                        quality = support::dbm2perc(
+                            caps.get(1).unwrap().as_str().parse::<i32>().unwrap_or(100),
+                        );
+                    }
+                    return ConnectionInfo::Wifi(value.to_string(), quality, true, ip);
+                }
+            }
+        }
+        ConnectionInfo::NotConnected
+    }
+
+    pub fn eth_info(&self) -> ConnectionInfo {
+        if let Some(ip) = self.detect_ip() {
+            ConnectionInfo::Ethernet(ip)
+        } else {
+            ConnectionInfo::NotConnected
+        }
     }
 }
 
@@ -259,6 +307,36 @@ impl Interfaces {
                     ifaces.iter().next().map(|e| e.clone())
                 }
             }
+        }
+    }
+}
+
+#[repr(C)]
+struct sockaddr_in {
+    pub sin_family: libc::sa_family_t,
+    pub sin_port: libc::in_port_t,
+    pub sin_addr: [u8; 4],
+    pub sin_zero: [u8; 8],
+}
+
+#[repr(C)]
+struct ifreq_ip {
+    ifr_name: [libc::c_uchar; libc::IF_NAMESIZE],
+    pub ifr_addr: sockaddr_in,
+}
+
+impl ifreq_ip {
+    fn new(ifname: &str) -> Self {
+        let mut ifr_name = [0; libc::IF_NAMESIZE];
+        ifr_name[..ifname.len()].clone_from_slice(ifname.as_bytes());
+        ifreq_ip {
+            ifr_name,
+            ifr_addr: sockaddr_in {
+                sin_family: libc::AF_INET as libc::sa_family_t,
+                sin_port: 0,
+                sin_addr: [0xff; 4],
+                sin_zero: [0; 8],
+            },
         }
     }
 }

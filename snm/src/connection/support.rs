@@ -88,3 +88,14 @@ pub fn gen_wpa_config(
     writeln!(file, "\n}}")?;
     Ok(filename)
 }
+
+pub fn dbm2perc(dbm: i32) -> u32 {
+    if dbm < -92 {
+        1
+    } else if dbm > -21 {
+        100
+    } else {
+        let x = dbm as f32;
+        ((-0.0154 * x * x) - (0.3794 * x) + 98.182).round() as u32
+    }
+}
