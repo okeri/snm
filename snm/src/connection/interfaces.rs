@@ -260,6 +260,8 @@ impl Interfaces {
                                     println!("Detected ethernet interface: {}", iface_name);
                                     iface.up();
                                     self.eth_ifaces.insert(iface);
+                                } else {
+                                    iface.up();
                                 }
                             }
                             'w' => {
