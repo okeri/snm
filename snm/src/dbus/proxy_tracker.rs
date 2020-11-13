@@ -1,4 +1,7 @@
-use rustbus::{params::Base, params::Param, Message};
+use rustbus::{
+    params::Base,
+    params::{message::Message, Param},
+};
 
 use std::collections::HashSet;
 use std::sync::{
@@ -29,14 +32,18 @@ impl ProxyTracker {
     }
 
     pub fn start_track(&mut self, msg: &Message) {
-        if let Some(ref sender) = msg.sender {
+        if let Some(ref sender) = msg.dynheader.sender {
             self.proxies.insert(sender.to_owned());
             self.count.fetch_add(1, Ordering::SeqCst);
         }
     }
 
     pub fn event(&mut self, msg: &Message) {
-        if msg.member.eq(&Some("NameOwnerChanged".to_owned())) {
+        if msg
+            .dynheader
+            .member
+            .eq(&Some("NameOwnerChanged".to_owned()))
+        {
             if msg.params.len() == 3 {
                 if let Some(value) = to_string(&msg.params[2]) {
                     if value == "" {

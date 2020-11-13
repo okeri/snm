@@ -8,11 +8,16 @@ mod config;
 mod connection;
 mod convert;
 mod dbus;
+mod marshal;
 
 use connection::{
     Connection, ConnectionInfo, ConnectionSetting, CouldConnect, KnownNetwork, SignalMsg,
 };
-use rustbus::{message::Message, standard_messages, MessageType};
+use rustbus::{
+    connection::Error,
+    message_builder::{DynamicHeader, MarshalledMessage},
+    standard_messages, MessageType,
+};
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -23,7 +28,7 @@ use std::{thread, time};
 const NETWORK_CHECK_INTERVAL: u64 = 2;
 const NETWORK_SCAN_INTERVAL: u64 = 14;
 
-fn main() -> Result<(), rustbus::client_conn::Error> {
+fn main() -> Result<(), Error> {
     let (connect_sender, connect_recv) = mpsc::channel::<ConnectionSetting>();
     let mut adapter = dbus::DBusLoop::connect_to_bus(dbus::Bus::System, "com.github.okeri.snm")?;
     let mut emitter = adapter.new_emitter("/");
@@ -35,15 +40,15 @@ fn main() -> Result<(), rustbus::client_conn::Error> {
         signal.log();
         match signal {
             SignalMsg::StateChanged(state) => {
-                emitter.emit("state_changed", state.into()).unwrap();
+                emitter.emit("state_changed", state).unwrap();
             }
             SignalMsg::ConnectStatusChanged(status) => {
                 emitter
-                    .emit("connect_status_changed", status.into())
+                    .emit("connect_status_changed", status as u32)
                     .unwrap();
             }
             SignalMsg::NetworkList(networks) => {
-                emitter.emit("network_list", networks.into()).unwrap();
+                emitter.emit("network_list", networks).unwrap();
             }
         }
     });
@@ -125,14 +130,14 @@ fn main() -> Result<(), rustbus::client_conn::Error> {
             MessageType::Call => {
                 use convert::convert;
                 let mut reply = msg.make_response();
-                if let Some(ref member) = msg.member {
-                    match member.as_ref() {
+                if let Some(ref member) = msg.dynheader.member {
+                    match member.as_str() {
                         "hello" => {
                             tracker.start_track(&msg);
                         }
                         "connect" => {
                             if !connection.allow_reconnect() {
-                                return make_failed(msg, "Reconnect is not alowed");
+                                return make_failed(&msg.dynheader, "Reconnect is not alowed");
                             }
                             if connection.current_state().connecting() {
                                 connection.disconnect();
@@ -146,7 +151,7 @@ fn main() -> Result<(), rustbus::client_conn::Error> {
                                         known.to_setting(essid)
                                     } else {
                                         return make_failed(
-                                            msg,
+                                            &msg.dynheader,
                                             "Connection is secured but no password specified",
                                         );
                                     }
@@ -155,7 +160,10 @@ fn main() -> Result<(), rustbus::client_conn::Error> {
                                 };
                                 connect_sender.send(settings).unwrap();
                             } else {
-                                return Some(standard_messages::invalid_args(&msg, Some("(usb)")));
+                                return Some(standard_messages::invalid_args(
+                                    &msg.dynheader,
+                                    Some("(usb)"),
+                                ));
                             }
                         }
                         "disconnect" => {
@@ -163,21 +171,23 @@ fn main() -> Result<(), rustbus::client_conn::Error> {
                             auto_connect.store(false, Ordering::SeqCst);
                         }
                         "get_state" => {
-                            reply.push_params(connection.current_state().into());
+                            reply.body.push_param(connection.current_state()).unwrap();
                         }
                         "get_networks" => {
-                            reply.push_params(connection.get_networks().into());
+                            reply.body.push_param(connection.get_networks()).unwrap();
                         }
                         "get_props" => {
                             if let Ok(ref essid) = convert::<String>(&msg.params) {
                                 if let Some(network) = known_networks.lock().unwrap().get(essid) {
-                                    reply.push_params(network.into());
+                                    reply.body.push_param(network).unwrap();
                                 } else {
-                                    let network = KnownNetwork::default();
-                                    reply.push_params((&network).into());
+                                    reply.body.push_param(KnownNetwork::default()).unwrap();
                                 }
                             } else {
-                                return Some(standard_messages::invalid_args(&msg, Some("s")));
+                                return Some(standard_messages::invalid_args(
+                                    &msg.dynheader,
+                                    Some("s"),
+                                ));
                             }
                         }
                         "set_props" => {
@@ -191,26 +201,33 @@ fn main() -> Result<(), rustbus::client_conn::Error> {
                                         known.remove(&essid);
                                     }
                                     if config::write_networks(&known).is_err() {
-                                        return make_failed(msg, "Cannot write config");
+                                        return make_failed(&msg.dynheader, "Cannot write config");
                                     }
                                 }
                             } else {
-                                return Some(standard_messages::invalid_args(&msg, Some("ssibbb")));
+                                return Some(standard_messages::invalid_args(
+                                    &msg.dynheader,
+                                    Some("ssibbb"),
+                                ));
                             }
                         }
                         "Introspect" => {
                             let xml = include_str!("../xml/snm.xml").to_owned();
-                            reply.push_params(vec![xml]);
+                            reply.body.push_param(xml).unwrap();
                         }
                         _ => {
-                            return Some(standard_messages::unknown_method(&msg));
+                            return Some(standard_messages::unknown_method(&msg.dynheader));
                         }
                     }
                 }
                 return Some(reply);
             }
             MessageType::Signal => {
-                if msg.interface.eq(&Some("org.freedesktop.DBus".to_owned())) {
+                if msg
+                    .dynheader
+                    .interface
+                    .eq(&Some("org.freedesktop.DBus".to_owned()))
+                {
                     tracker.event(&msg);
                 }
             }
@@ -220,8 +237,8 @@ fn main() -> Result<(), rustbus::client_conn::Error> {
     })
 }
 
-fn make_failed<'a, 'e>(msg: Message<'a, 'e>, text: &str) -> Option<Message<'a, 'e>> {
-    let reply = msg.make_error_response(
+fn make_failed(call: &DynamicHeader, text: &str) -> Option<MarshalledMessage> {
+    let reply = call.make_error_response(
         "org.freedesktop.DBus.Error.Failed".to_owned(),
         Some(text.to_owned()),
     );

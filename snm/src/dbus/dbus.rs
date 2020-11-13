@@ -1,9 +1,7 @@
-use std::io::Read;
 use std::os::unix::{
-    io::{AsRawFd, RawFd},
+    io::{AsRawFd, FromRawFd, RawFd},
     net::UnixStream,
 };
-use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicU32, Ordering},
     Arc,
@@ -11,15 +9,18 @@ use std::sync::{
 
 use rustbus::{
     auth,
-    client_conn::Error,
-    get_session_bus_path, get_system_bus_path, message,
-    params::Param,
+    connection::Error,
+    get_session_bus_path, get_system_bus_path,
+    message_builder::MarshalledMessage,
+    params::message::Message,
     standard_messages,
     wire::{marshal, unmarshal, util},
-    MessageBuilder, MessageType,
+    ByteOrder, Marshal, MessageBuilder, MessageType,
 };
 
-use nix::sys::socket::{recvmsg, sendmsg, ControlMessage, ControlMessageOwned, MsgFlags};
+use nix::sys::socket::{
+    self, connect, recvmsg, sendmsg, socket, ControlMessage, MsgFlags, SockAddr, UnixAddr,
+};
 use nix::{cmsg_space, sys::uio::IoVec};
 
 #[allow(dead_code)]
@@ -50,9 +51,20 @@ impl Clone for BasicConnection {
 
 type Result<T> = std::result::Result<T, Error>;
 
-impl<'a, 'e> BasicConnection {
-    pub fn connect_to_bus(path: PathBuf) -> Result<BasicConnection> {
-        let mut stream = UnixStream::connect(&path)?;
+/// Actual clone of client_conn::Conn
+impl BasicConnection {
+    pub fn connect_to_bus(addr: UnixAddr) -> Result<BasicConnection> {
+        let sock = socket(
+            socket::AddressFamily::Unix,
+            socket::SockType::Stream,
+            socket::SockFlag::empty(),
+            None,
+        )?;
+
+        let sock_addr = SockAddr::Unix(addr);
+        connect(sock, &sock_addr)?;
+        let mut stream = unsafe { UnixStream::from_raw_fd(sock) };
+
         match auth::do_auth(&mut stream)? {
             auth::AuthResult::Ok => {}
             auth::AuthResult::Rejected => return Err(Error::AuthFailed),
@@ -71,7 +83,7 @@ impl<'a, 'e> BasicConnection {
         })
     }
 
-    fn refill_buffer(&mut self, max_buffer_size: usize) -> Result<Vec<ControlMessageOwned>> {
+    fn refill_buffer(&mut self, max_buffer_size: usize) -> Result<()> {
         let bytes_to_read = max_buffer_size - self.msg_buf_in.len();
 
         const BUFSIZE: usize = 512;
@@ -90,36 +102,23 @@ impl<'a, 'e> BasicConnection {
         .map_err(|e| match e.as_errno() {
             Some(nix::errno::Errno::EAGAIN) => Error::TimedOut,
             _ => Error::NixError(e),
-        })?;
-        let cmsgs = msg.cmsgs().collect();
+        });
+
+        self.stream.set_nonblocking(false)?;
+        let msg = msg?;
 
         self.msg_buf_in
             .extend(&mut tmpbuf[..msg.bytes].iter().copied());
-        Ok(cmsgs)
+        Ok(())
     }
 
-    /// Blocks until a message has been read from the conn
-    pub fn get_next_message(&mut self) -> Result<message::Message<'a, 'e>> {
-        // This whole dance around reading exact amounts of bytes is necessary to read messages exactly at their bounds.
-        // I think thats necessary so we can later add support for unixfd sending
-        let mut cmsgs = Vec::new();
-
-        let header = loop {
-            match unmarshal::unmarshal_header(&self.msg_buf_in, 0) {
-                Ok((_, header)) => break header,
-                Err(unmarshal::Error::NotEnoughBytes) => {}
-                Err(e) => return Err(Error::from(e)),
-            }
-            let new_cmsgs = self.refill_buffer(unmarshal::HEADER_LEN)?;
-            cmsgs.extend(new_cmsgs);
-        };
-
-        let mut header_fields_len = [0u8; 4];
-        self.stream.read_exact(&mut header_fields_len[..])?;
+    pub fn bytes_needed_for_current_message(&self) -> Result<usize> {
+        if self.msg_buf_in.len() < 16 {
+            return Ok(16);
+        }
+        let (_, header) = unmarshal::unmarshal_header(&self.msg_buf_in, 0)?;
         let (_, header_fields_len) =
-            util::parse_u32(&header_fields_len.to_vec(), header.byteorder)?;
-        util::write_u32(header_fields_len, header.byteorder, &mut self.msg_buf_in);
-
+            util::parse_u32(&self.msg_buf_in[unmarshal::HEADER_LEN..], header.byteorder)?;
         let complete_header_size = unmarshal::HEADER_LEN + header_fields_len as usize + 4; // +4 because the length of the header fields does not count
 
         let padding_between_header_and_body = 8 - ((complete_header_size) % 8);
@@ -129,63 +128,84 @@ impl<'a, 'e> BasicConnection {
             padding_between_header_and_body
         };
 
-        let bytes_needed = unmarshal::HEADER_LEN
-            + (header.body_len + header_fields_len + 4) as usize
-            + padding_between_header_and_body; // +4 because the length of the header fields does not count
-        loop {
-            let new_cmsgs = self.refill_buffer(bytes_needed)?;
-            cmsgs.extend(new_cmsgs);
-            if self.msg_buf_in.len() == bytes_needed {
-                break;
-            }
+        let bytes_needed = complete_header_size as usize
+            + padding_between_header_and_body
+            + header.body_len as usize;
+        Ok(bytes_needed)
+    }
+
+    // Checks if the internal buffer currently holds a complete message
+    pub fn buffer_contains_whole_message(&self) -> Result<bool> {
+        if self.msg_buf_in.len() < 16 {
+            return Ok(false);
         }
-        let (bytes_used, mut msg) = unmarshal::unmarshal_next_message(
+        let bytes_needed = self.bytes_needed_for_current_message();
+        match bytes_needed {
+            Err(e) => {
+                if let Error::UnmarshalError(unmarshal::Error::NotEnoughBytes) = e {
+                    Ok(false)
+                } else {
+                    Err(e)
+                }
+            }
+            Ok(bytes_needed) => Ok(self.msg_buf_in.len() >= bytes_needed),
+        }
+    }
+
+    pub fn read_whole_message(&mut self) -> Result<()> {
+        while !self.buffer_contains_whole_message()? {
+            self.refill_buffer(self.bytes_needed_for_current_message()?)?;
+        }
+        Ok(())
+    }
+
+    pub fn get_next_message(&mut self) -> Result<MarshalledMessage> {
+        self.read_whole_message()?;
+        let (hdrbytes, header) = unmarshal::unmarshal_header(&self.msg_buf_in, 0)?;
+        let (dynhdrbytes, dynheader) =
+            unmarshal::unmarshal_dynamic_header(&header, &self.msg_buf_in, hdrbytes)?;
+
+        let (bytes_used, msg) = unmarshal::unmarshal_next_message(
             &header,
-            &mut self.msg_buf_in,
-            unmarshal::HEADER_LEN,
+            dynheader,
+            &self.msg_buf_in,
+            hdrbytes + dynhdrbytes,
         )?;
-        if bytes_needed != bytes_used + unmarshal::HEADER_LEN {
+
+        if self.msg_buf_in.len() != bytes_used + hdrbytes + dynhdrbytes {
             return Err(Error::UnmarshalError(unmarshal::Error::NotAllBytesUsed));
         }
         self.msg_buf_in.clear();
-
-        for cmsg in cmsgs {
-            match cmsg {
-                ControlMessageOwned::ScmRights(fds) => {
-                    msg.raw_fds.extend(fds);
-                }
-                _ => {
-                    // TODO what to do?
-                    println!("Cmsg other than ScmRights: {:?}", cmsg);
-                }
-            }
-        }
         Ok(msg)
     }
 
-    pub fn send_message(&mut self, mut msg: message::Message<'a, 'e>) -> Result<u32> {
+    pub fn send_message(&mut self, mut msg: MarshalledMessage) -> Result<u32> {
         self.msg_buf_out.clear();
-        if msg.serial.is_none() {
-            msg.serial = Some(self.serial_counter.fetch_add(1, Ordering::SeqCst));
+
+        if msg.dynheader.serial.is_none() {
+            msg.dynheader.serial = Some(self.serial_counter.fetch_add(1, Ordering::SeqCst));
         }
-        marshal::marshal(
-            &msg,
-            message::ByteOrder::LittleEndian,
-            &[],
-            &mut self.msg_buf_out,
-        )?;
+
+        marshal::marshal(&msg, ByteOrder::LittleEndian, &[], &mut self.msg_buf_out)?;
+
         let iov = [IoVec::from_slice(&self.msg_buf_out)];
         let flags = MsgFlags::empty();
 
+        let raw_fds = Vec::new();
         let l = sendmsg(
             self.stream.as_raw_fd(),
             &iov,
-            &[ControlMessage::ScmRights(&msg.raw_fds)],
+            &[ControlMessage::ScmRights(&raw_fds)],
             flags,
             None,
-        )?;
+        );
+
+        self.stream.set_nonblocking(false)?;
+
+        let l = l?;
+
         assert_eq!(l, self.msg_buf_out.len());
-        msg.serial.ok_or(Error::TimedOut)
+        msg.dynheader.serial.ok_or(Error::TimedOut)
     }
 }
 
@@ -196,12 +216,12 @@ pub struct Emitter {
     object: String,
 }
 
-impl<'a, 'e> Emitter {
-    pub fn emit(&mut self, member: &str, args: Vec<Param>) -> Result<u32> {
-        let sig = MessageBuilder::new()
+impl Emitter {
+    pub fn emit<P: Marshal>(&mut self, member: &str, param: P) -> Result<u32> {
+        let mut sig = MessageBuilder::new()
             .signal(self.iface.clone(), member.into(), self.object.clone())
-            .with_params(args)
             .build();
+        sig.body.push_param(param)?;
         self.connection.send_message(sig)
     }
 }
@@ -222,7 +242,10 @@ impl DBusLoop {
         Self::send_message_blocking(&mut connection, standard_messages::hello())?;
         Self::send_message_blocking(
             &mut connection,
-            standard_messages::request_name(iface_name.into(), 0),
+            standard_messages::request_name(
+                iface_name.into(),
+                standard_messages::DBUS_NAME_FLAG_REPLACE_EXISTING,
+            ),
         )?;
         Ok(DBusLoop {
             connection,
@@ -240,10 +263,11 @@ impl DBusLoop {
 
     pub fn run<Handler>(&mut self, mut handler: Handler) -> Result<()>
     where
-        Handler: for<'a, 'e> FnMut(message::Message<'a, 'e>) -> Option<message::Message<'a, 'e>>,
+        Handler: for<'a, 'e> FnMut(Message<'a, 'e>) -> Option<MarshalledMessage>,
     {
         loop {
             let msg = self.connection.get_next_message()?;
+            let msg = msg.unmarshall_all()?;
             if let Some(response) = handler(msg) {
                 self.connection.send_message(response)?;
             }
@@ -256,15 +280,15 @@ impl DBusLoop {
             .map(|_| ())
     }
 
-    fn send_message_blocking<'a, 'e>(
+    fn send_message_blocking(
         connection: &mut BasicConnection,
-        msg: message::Message<'a, 'e>,
-    ) -> Result<message::Message<'a, 'e>> {
+        msg: MarshalledMessage,
+    ) -> Result<MarshalledMessage> {
         let serial = connection.send_message(msg)?;
         loop {
             let msg = connection.get_next_message()?;
             if let MessageType::Reply = msg.typ {
-                if let Some(ser) = msg.response_serial {
+                if let Some(ser) = msg.dynheader.response_serial {
                     if ser == serial {
                         return Ok(msg);
                     }
