@@ -118,6 +118,19 @@ impl KnownNetwork {
     }
 }
 
+impl std::convert::From<ConnectionInfo> for NetworkInfo {
+    fn from(info: ConnectionInfo) -> Self {
+        match info {
+            ConnectionInfo::Ethernet(_) | ConnectionInfo::ConnectingEth => NetworkInfo::Ethernet,
+            ConnectionInfo::Wifi(ssid, signal, sec, _) => NetworkInfo::Wifi(ssid, signal, sec),
+            ConnectionInfo::ConnectingWifi(ssid) => NetworkInfo::Wifi(ssid, 50, true),
+            _ => {
+                panic!("Cannot cast disconnected states to NetworkInfo");
+            }
+        }
+    }
+}
+
 impl Default for KnownNetwork {
     fn default() -> Self {
         KnownNetwork {

@@ -134,6 +134,11 @@ impl Interface {
                 if let Ok(config) = dhcp.poll(&mut iface, &mut sockets, timestamp) {
                     if let Some(config) = config {
                         config.address.map(|cidr| {
+                            iface.update_ip_addrs(|addrs| {
+                                addrs.iter_mut().nth(0).map(|addr| {
+                                    *addr = IpCidr::Ipv4(cidr);
+                                });
+                            });
                             self.set_addr(cidr);
                             result = Ok(cidr.address().to_string());
                         });

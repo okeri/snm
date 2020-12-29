@@ -262,7 +262,11 @@ where
         match current {
             ConnectionInfo::NotConnected => {}
             _ => {
-                self.change_state(current);
+                self.change_state(current.clone());
+                let mut networks = NetworkList::new();
+                networks.push(current.into());
+                *self.networks.lock().unwrap() = networks.clone();
+                self.signal(SignalMsg::NetworkList(networks));
             }
         }
     }
