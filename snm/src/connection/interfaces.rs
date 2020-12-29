@@ -10,31 +10,57 @@ use smoltcp::time::{Duration, Instant};
 use smoltcp::wire::{EthernetAddress, IpCidr, Ipv4Address, Ipv4Cidr};
 use std::collections::{BTreeMap, HashSet};
 use std::os::unix::io::AsRawFd;
-use std::{fmt, fs, path::Path};
+use std::{fmt, fs, path::Path, thread, time, hash::{Hash, Hasher}};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 
-#[derive(Hash, Eq, PartialEq, Clone)]
-pub struct Interface(String);
+
+const DHCP_POLL_INTERVAL_MS: u64 = 500;
+const DHCP_TIMEOUT_MS: u64 = 5000;
+
+#[derive(Clone)]
+pub struct Interface {
+    name: String,
+    dhcp_running: Arc<AtomicBool>,
+}
+
+impl Hash for Interface {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+    }
+}
+
+impl PartialEq for Interface {
+    fn eq(&self, other: &Interface) -> bool {
+	self.name == other.name
+    }
+}
+
+impl Eq for Interface {}
 
 impl Interface {
     pub fn new(name: &str) -> Self {
-        Interface { 0: name.to_owned() }
+        Interface { name: name.to_owned(), dhcp_running: Arc::new(AtomicBool::new(false)) }
     }
 
     pub fn disconnect(&self) {
-        support::run(&format!("ip addr flush dev {}", self.0), false);
+	self.dhcp_running.store(false, Ordering::SeqCst);
+        support::run(&format!("ip addr flush dev {}", self.name), false);
         support::run(
-            &format!("wpa_cli -i {} -p /var/run/wpa disconnect", self.0),
+            &format!("wpa_cli -i {} -p /var/run/wpa disconnect", self.name),
             false,
         );
         support::run(
-            &format!("wpa_cli -i {} -p /var/run/wpa terminate", self.0),
+            &format!("wpa_cli -i {} -p /var/run/wpa terminate", self.name),
             false,
         );
     }
 
     pub fn scan(&self) -> String {
         if self.valid() {
-            support::run(&format!("iw dev {} scan", self.0), false)
+            support::run(&format!("iw dev {} scan", self.name), false)
         } else {
             "".to_owned()
         }
@@ -42,19 +68,19 @@ impl Interface {
 
     pub fn up(&self) {
         if self.valid() {
-            support::run(&format!("ip l set {} up", self.0), false);
+            support::run(&format!("ip l set {} up", self.name), false);
         }
     }
 
     pub fn down(&self) {
         if self.valid() {
-            support::run(&format!("ip l set {} down", self.0), false);
+            support::run(&format!("ip l set {} down", self.name), false);
         }
     }
 
     pub fn is_plugged_in(&self) -> bool {
         if self.valid() {
-            let filename = format!("/sys/class/net/{}/carrier", self.0);
+            let filename = format!("/sys/class/net/{}/carrier", self.name);
             if let Ok(value) = fs::read_to_string(&filename) {
                 return value == "1\n";
             }
@@ -64,7 +90,7 @@ impl Interface {
 
     pub fn is_up(&self) -> bool {
         if self.valid() {
-            let filename = format!("/sys/class/net/{}/operstate", self.0);
+            let filename = format!("/sys/class/net/{}/operstate", self.name);
             if let Ok(value) = fs::read_to_string(&filename) {
                 return value == "up\n";
             }
@@ -73,38 +99,12 @@ impl Interface {
     }
 
     fn valid(&self) -> bool {
-        !self.0.is_empty()
+        !self.name.is_empty()
     }
 
-    fn set_addr(&mut self, addr: Ipv4Cidr) {
-        support::run(&format!("ip addr add {} dev {}", addr, self.0), false);
-    }
-
-    fn set_route(&mut self, route: Ipv4Address) {
-        support::run(
-            &format!("ip route add default via {} dev {}", route, self.0),
-            false,
-        );
-    }
-
-    fn set_dns(&mut self, dns: [Option<Ipv4Address>; 3]) {
-        use std::io::Write;
-        let mut resolv =
-            std::fs::File::create("/etc/resolv.conf").expect("cannot rewrite /etc/resolv.conf");
-        for dns_server in dns.iter().filter_map(|s| *s) {
-            writeln!(resolv, "nameserver {}\n", dns_server)
-                .expect("cannot write /etc/resolve.conf");
-        }
-    }
-
-    pub fn dhcp(&mut self) -> Result<String, ()> {
-        let mut result: Result<String, ()> = Err(());
-        if !self.valid() {
-            return result;
-        }
-        let mac = self.detect_mac().expect("cannot detect HW addr");
-
-        let device = RawSocket::new(&self.0).unwrap();
+    fn dhcp_process(ifname: &str, mac: EthernetAddress, runflag: Arc<AtomicBool>,
+		    ip: Arc<Mutex<String>>) {
+        let device = RawSocket::new(ifname).unwrap();
         let fd = device.as_raw_fd();
         let neighbor_cache = NeighborCache::new(BTreeMap::new());
         let ip_addrs = [IpCidr::new(Ipv4Address::UNSPECIFIED.into(), 0)];
@@ -124,35 +124,72 @@ impl Interface {
         let mut dhcp =
             Dhcpv4Client::new(&mut sockets, dhcp_rx_buffer, dhcp_tx_buffer, Instant::now());
 
-        let mut tries = 0;
-
-        let delay = Duration::from_millis(500);
-        while result.is_err() && tries < 10 {
+        let delay = Duration::from_millis(DHCP_POLL_INTERVAL_MS);
+        while runflag.load(Ordering::SeqCst) {
             let timestamp = Instant::now();
-
+	    
             if iface.poll(&mut sockets, timestamp).is_ok() {
                 if let Ok(config) = dhcp.poll(&mut iface, &mut sockets, timestamp) {
                     if let Some(config) = config {
-                        config.address.map(|cidr| {
-                            self.set_addr(cidr);
-                            result = Ok(cidr.address().to_string());
+                        config.address.map(|addr| {
+			    *ip.lock().unwrap() = addr.address().to_string();
+			    support::run(&format!("ip addr add {} dev {}", addr, ifname), false);
+			    println!("setting addr to {}", addr);
                         });
 
-                        config.router.map(|router| {
-                            self.set_route(router);
+                        config.router.map(|route| {
+			    support::run(
+				&format!("ip route add default via {} dev {}", route, ifname),
+				false,
+			    );
                         });
 
                         if config.dns_servers.iter().any(|s| s.is_some()) {
-                            self.set_dns(config.dns_servers);
+			    use std::io::Write;
+			    let mut resolv =
+				std::fs::File::create("/etc/resolv.conf").expect("cannot rewrite /etc/resolv.conf");
+			    for dns_server in config.dns_servers.iter().filter_map(|s| *s) {
+				writeln!(resolv, "nameserver {}\n", dns_server)
+				    .expect("cannot write /etc/resolve.conf");
+			    }
                         }
                     }
 
                     wait(fd, Some(delay)).unwrap_or(());
-                    tries += 1;
                 }
             }
         }
-        return result;
+    }
+    
+    //const DHCP_POLL_INTERVAL_MS: u64 = 500;
+    //const DHCP_TIMEOUT_MS: u64 = 5000;
+
+    pub fn dhcp(&self) -> Result<String, ()> {
+        if !self.valid() {
+            return Err(());
+        }
+        let mac = self.detect_mac().expect("cannot detect HW addr");
+	let ip = Arc::new(Mutex::new(String::new()));
+	let rip = ip.clone();
+	let name = self.name.clone();
+	let runflag = self.dhcp_running.clone();
+	runflag.store(true, Ordering::SeqCst);
+	thread::spawn(move || {
+	    Interface::dhcp_process(&name, mac, runflag, rip);
+	});
+
+	let mut tries = 0;
+	let max_tries = DHCP_TIMEOUT_MS / DHCP_POLL_INTERVAL_MS;
+	while tries < max_tries {
+	    thread::sleep(time::Duration::from_millis(DHCP_POLL_INTERVAL_MS));
+	    let result = ip.lock().unwrap().clone();
+	    if !result.is_empty() {
+		return Ok(result);
+	    }
+	    tries += 1;
+	}
+	self.dhcp_running.store(false, Ordering::SeqCst);
+	return Err(());
     }
 
     fn detect_mac(&self) -> Result<EthernetAddress, ()> {
@@ -160,7 +197,7 @@ impl Interface {
         let ifaces = getifaddrs().map_err(|_| ())?;
 
         for iface in ifaces {
-            if iface.interface_name == self.0 {
+            if iface.interface_name == self.name {
                 if let Some(addr) = iface.address {
                     if let SockAddr::Link(link) = addr {
                         return Ok(EthernetAddress(link.addr()));
@@ -173,7 +210,7 @@ impl Interface {
 
     fn detect_ip(&self) -> Option<String> {
         let ok: bool;
-        let ifreq = ifreq_ip::new(&self.0);
+        let ifreq = ifreq_ip::new(&self.name);
         unsafe {
             let fd = libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0);
             ok = libc::ioctl(fd, libc::SIOCGIFADDR, &ifreq) != -1;
@@ -189,7 +226,7 @@ impl Interface {
 
     pub fn wlan_info(&self) -> ConnectionInfo {
         use std::str;
-        let output = support::run(&format!("iw dev {} link", self.0), false);
+        let output = support::run(&format!("iw dev {} link", self.name), false);
 
         if let Some(ref ecaps) = parse(Parsers::NetworkEssid, &output) {
             if let Some(ip) = self.detect_ip() {
@@ -220,7 +257,7 @@ impl Interface {
 
 impl fmt::Display for Interface {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "{}", self.name)
     }
 }
 

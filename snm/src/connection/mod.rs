@@ -151,7 +151,7 @@ where
         self.tries.store(AUTH_MAX_TRIES, Ordering::SeqCst);
         let mut network = NetworkInfo::Ethernet;
         let if_iface = self.ifaces.lock().unwrap().from_setting(&setting);
-        if let Some(mut iface) = if_iface {
+        if let Some(iface) = if_iface {
             let connection = self.current.read().unwrap().clone();
 
             if connection.active() {
