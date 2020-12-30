@@ -7,15 +7,19 @@ use smoltcp::iface::{EthernetInterfaceBuilder, NeighborCache, Routes};
 use smoltcp::phy::{wait, RawSocket};
 use smoltcp::socket::{RawPacketMetadata, RawSocketBuffer, SocketSet};
 use smoltcp::time::{Duration, Instant};
-use smoltcp::wire::{EthernetAddress, IpCidr, Ipv4Address, Ipv4Cidr};
+use smoltcp::wire::{EthernetAddress, IpCidr, Ipv4Address};
 use std::collections::{BTreeMap, HashSet};
 use std::os::unix::io::AsRawFd;
-use std::{fmt, fs, path::Path, thread, time, hash::{Hash, Hasher}};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
 };
-
+use std::{
+    fmt, fs,
+    hash::{Hash, Hasher},
+    path::Path,
+    thread, time,
+};
 
 const DHCP_POLL_INTERVAL_MS: u64 = 500;
 const DHCP_TIMEOUT_MS: u64 = 5000;
@@ -34,7 +38,7 @@ impl Hash for Interface {
 
 impl PartialEq for Interface {
     fn eq(&self, other: &Interface) -> bool {
-	self.name == other.name
+        self.name == other.name
     }
 }
 
@@ -42,11 +46,14 @@ impl Eq for Interface {}
 
 impl Interface {
     pub fn new(name: &str) -> Self {
-        Interface { name: name.to_owned(), dhcp_running: Arc::new(AtomicBool::new(false)) }
+        Interface {
+            name: name.to_owned(),
+            dhcp_running: Arc::new(AtomicBool::new(false)),
+        }
     }
 
     pub fn disconnect(&self) {
-	self.dhcp_running.store(false, Ordering::SeqCst);
+        self.dhcp_running.store(false, Ordering::SeqCst);
         support::run(&format!("ip addr flush dev {}", self.name), false);
         support::run(
             &format!("wpa_cli -i {} -p /var/run/wpa disconnect", self.name),
@@ -102,8 +109,12 @@ impl Interface {
         !self.name.is_empty()
     }
 
-    fn dhcp_process(ifname: &str, mac: EthernetAddress, runflag: Arc<AtomicBool>,
-		    ip: Arc<Mutex<String>>) {
+    fn dhcp_process(
+        ifname: &str,
+        mac: EthernetAddress,
+        runflag: Arc<AtomicBool>,
+        ip: Arc<Mutex<String>>,
+    ) {
         let device = RawSocket::new(ifname).unwrap();
         let fd = device.as_raw_fd();
         let neighbor_cache = NeighborCache::new(BTreeMap::new());
@@ -127,31 +138,30 @@ impl Interface {
         let delay = Duration::from_millis(DHCP_POLL_INTERVAL_MS);
         while runflag.load(Ordering::SeqCst) {
             let timestamp = Instant::now();
-	    
+
             if iface.poll(&mut sockets, timestamp).is_ok() {
                 if let Ok(config) = dhcp.poll(&mut iface, &mut sockets, timestamp) {
                     if let Some(config) = config {
                         config.address.map(|addr| {
-			    *ip.lock().unwrap() = addr.address().to_string();
-			    support::run(&format!("ip addr add {} dev {}", addr, ifname), false);
-			    println!("setting addr to {}", addr);
+                            *ip.lock().unwrap() = addr.address().to_string();
+                            support::run(&format!("ip addr add {} dev {}", addr, ifname), false);
                         });
 
                         config.router.map(|route| {
-			    support::run(
-				&format!("ip route add default via {} dev {}", route, ifname),
-				false,
-			    );
+                            support::run(
+                                &format!("ip route add default via {} dev {}", route, ifname),
+                                false,
+                            );
                         });
 
                         if config.dns_servers.iter().any(|s| s.is_some()) {
-			    use std::io::Write;
-			    let mut resolv =
-				std::fs::File::create("/etc/resolv.conf").expect("cannot rewrite /etc/resolv.conf");
-			    for dns_server in config.dns_servers.iter().filter_map(|s| *s) {
-				writeln!(resolv, "nameserver {}\n", dns_server)
-				    .expect("cannot write /etc/resolve.conf");
-			    }
+                            use std::io::Write;
+                            let mut resolv = std::fs::File::create("/etc/resolv.conf")
+                                .expect("cannot rewrite /etc/resolv.conf");
+                            for dns_server in config.dns_servers.iter().filter_map(|s| *s) {
+                                writeln!(resolv, "nameserver {}\n", dns_server)
+                                    .expect("cannot write /etc/resolve.conf");
+                            }
                         }
                     }
 
@@ -160,36 +170,33 @@ impl Interface {
             }
         }
     }
-    
-    //const DHCP_POLL_INTERVAL_MS: u64 = 500;
-    //const DHCP_TIMEOUT_MS: u64 = 5000;
 
     pub fn dhcp(&self) -> Result<String, ()> {
         if !self.valid() {
             return Err(());
         }
         let mac = self.detect_mac().expect("cannot detect HW addr");
-	let ip = Arc::new(Mutex::new(String::new()));
-	let rip = ip.clone();
-	let name = self.name.clone();
-	let runflag = self.dhcp_running.clone();
-	runflag.store(true, Ordering::SeqCst);
-	thread::spawn(move || {
-	    Interface::dhcp_process(&name, mac, runflag, rip);
-	});
+        let ip = Arc::new(Mutex::new(String::new()));
+        let rip = ip.clone();
+        let name = self.name.clone();
+        let runflag = self.dhcp_running.clone();
+        runflag.store(true, Ordering::SeqCst);
+        thread::spawn(move || {
+            Interface::dhcp_process(&name, mac, runflag, rip);
+        });
 
-	let mut tries = 0;
-	let max_tries = DHCP_TIMEOUT_MS / DHCP_POLL_INTERVAL_MS;
-	while tries < max_tries {
-	    thread::sleep(time::Duration::from_millis(DHCP_POLL_INTERVAL_MS));
-	    let result = ip.lock().unwrap().clone();
-	    if !result.is_empty() {
-		return Ok(result);
-	    }
-	    tries += 1;
-	}
-	self.dhcp_running.store(false, Ordering::SeqCst);
-	return Err(());
+        let mut tries = 0;
+        let max_tries = DHCP_TIMEOUT_MS / DHCP_POLL_INTERVAL_MS;
+        while tries < max_tries {
+            thread::sleep(time::Duration::from_millis(DHCP_POLL_INTERVAL_MS));
+            let result = ip.lock().unwrap().clone();
+            if !result.is_empty() {
+                return Ok(result);
+            }
+            tries += 1;
+        }
+        self.dhcp_running.store(false, Ordering::SeqCst);
+        return Err(());
     }
 
     fn detect_mac(&self) -> Result<EthernetAddress, ()> {

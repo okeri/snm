@@ -226,22 +226,8 @@ where
                     return false;
                 }
             }
-            self.signal(SignalMsg::ConnectStatusChanged(ConnectionStatus::GettingIP));
-            if let Ok(ip) = iface.dhcp() {
-                let info = match setting {
-                    ConnectionSetting::Ethernet => ConnectionInfo::Ethernet(ip),
-
-                    ConnectionSetting::Wifi { essid, .. }
-                    | ConnectionSetting::OpenWifi { essid, .. } => {
-                        if let NetworkInfo::Wifi(_, ref quality, ref enc) = network {
-                            ConnectionInfo::Wifi(essid.to_string(), *quality, *enc, ip)
-                        } else {
-                            ConnectionInfo::NotConnected
-                        }
-                    }
-                };
+            if self.dhcp_phase(iface, network).active() {
                 erase_wpa_config();
-                self.change_state(info);
                 return true;
             }
             erase_wpa_config();
@@ -249,25 +235,45 @@ where
         false
     }
 
+    fn dhcp_phase(&mut self, iface: Interface, network: NetworkInfo) -> ConnectionInfo {
+        self.signal(SignalMsg::ConnectStatusChanged(ConnectionStatus::GettingIP));
+        if let Ok(ip) = iface.dhcp() {
+            let info = match network {
+                NetworkInfo::Ethernet => ConnectionInfo::Ethernet(ip),
+                NetworkInfo::Wifi(essid, signal, enc) => {
+                    ConnectionInfo::Wifi(essid, signal, enc, ip)
+                }
+            };
+            self.change_state(info.clone());
+            return info;
+        }
+        ConnectionInfo::NotConnected
+    }
+
     pub fn acquire(&mut self) {
         let mut current = ConnectionInfo::NotConnected;
+        let mut current_iface: Option<Interface> = None;
         if let Ok(mut ifaces) = self.ifaces.lock() {
             ifaces.detect();
             if let Some(eth) = ifaces.eth() {
                 current = eth.eth_info();
+                current_iface = Some(eth);
             } else if let Some(wlan) = ifaces.wlan() {
                 current = wlan.wlan_info();
+                current_iface = Some(wlan);
             }
         }
-        match current {
-            ConnectionInfo::NotConnected => {}
-            _ => {
-                self.change_state(current.clone());
-                let mut networks = NetworkList::new();
-                networks.push(current.into());
-                *self.networks.lock().unwrap() = networks.clone();
-                self.signal(SignalMsg::NetworkList(networks));
-            }
+
+        if let Some(iface) = current_iface {
+            current = self.dhcp_phase(iface, current.into());
+        }
+
+        if current.active() {
+            self.change_state(current.clone());
+            let mut networks = NetworkList::new();
+            networks.push(current.into());
+            *self.networks.lock().unwrap() = networks.clone();
+            self.signal(SignalMsg::NetworkList(networks));
         }
     }
 
