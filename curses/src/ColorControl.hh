@@ -2,25 +2,19 @@
 
 #include <curses.h>
 #include <optional>
+#include <stdexcept>
 
-enum Colors: NCURSES_PAIRS_T {
-    Selected = 1,
-    Tagged,
-    SelTagged,
-    Head
-};
+enum Colors : NCURSES_PAIRS_T { Selected = 1, Tagged, SelTagged, Head };
 
 class ColorControl {
     std::optional<Colors> color_;
-    WINDOW *win_;
+    WINDOW* win_;
 
   public:
-    explicit ColorControl(WINDOW* w) noexcept
-            : win_(w) {
+    explicit ColorControl(WINDOW* w) noexcept : win_(w) {
     }
 
-    ColorControl(WINDOW *w, Colors color) noexcept
-            : color_(color), win_(w) {
+    ColorControl(WINDOW* w, Colors color) noexcept : color_(color), win_(w) {
         wattron(win_, COLOR_PAIR(color_.value()));
     }
 
