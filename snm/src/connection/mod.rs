@@ -264,12 +264,13 @@ where
             }
         }
 
-        if let Some(iface) = current_iface {
-            current = self.dhcp_phase(iface, current.into());
+        if current.active() {
+            if let Some(iface) = current_iface {
+                current = self.dhcp_phase(iface, current.into());
+            }
         }
 
         if current.active() {
-            self.change_state(current.clone());
             let mut networks = NetworkList::new();
             networks.push(current.into());
             *self.networks.lock().unwrap() = networks.clone();
@@ -372,7 +373,6 @@ where
         use std::str;
 
         let mut networks = NetworkList::new();
-
         let ifaces = self.ifaces.lock().unwrap().clone();
         if let Some(eth) = ifaces.eth() {
             if eth.is_plugged_in() {

@@ -1,10 +1,13 @@
-use std::os::unix::{
-    io::{AsRawFd, FromRawFd, RawFd},
-    net::UnixStream,
-};
 use std::sync::{
     atomic::{AtomicU32, Ordering},
     Arc,
+};
+use std::{
+    convert::TryFrom,
+    os::unix::{
+        io::{AsRawFd, FromRawFd, RawFd},
+        net::UnixStream,
+    },
 };
 
 use rustbus::{
@@ -287,12 +290,22 @@ impl DBusLoop {
         let serial = connection.send_message(msg)?;
         loop {
             let msg = connection.get_next_message()?;
-            if let MessageType::Reply = msg.typ {
-                if let Some(ser) = msg.dynheader.response_serial {
-                    if ser == serial {
-                        return Ok(msg);
+            match msg.typ {
+                MessageType::Reply => {
+                    if let Some(ser) = msg.dynheader.response_serial {
+                        if ser == serial {
+                            return Ok(msg);
+                        }
                     }
                 }
+                MessageType::Error => {
+                    let umsg = msg.unmarshall_all()?;
+                    if let rustbus::params::Param::Base(ref base) = umsg.params[0] {
+                        panic!("{}", String::try_from(base).unwrap());
+                    }
+                    panic!("unknown bus error");
+                }
+                _ => {}
             }
         }
     }

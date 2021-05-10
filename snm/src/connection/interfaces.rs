@@ -6,7 +6,7 @@ use smoltcp::dhcp::Dhcpv4Client;
 use smoltcp::iface::{EthernetInterfaceBuilder, NeighborCache, Routes};
 use smoltcp::phy::{wait, RawSocket};
 use smoltcp::socket::{RawPacketMetadata, RawSocketBuffer, SocketSet};
-use smoltcp::time::{Duration, Instant};
+use smoltcp::time::Instant;
 use smoltcp::wire::{EthernetAddress, IpCidr, Ipv4Address};
 use std::collections::{BTreeMap, HashSet};
 use std::os::unix::io::AsRawFd;
@@ -22,12 +22,14 @@ use std::{
 };
 
 const DHCP_POLL_INTERVAL_MS: u64 = 500;
-const DHCP_TIMEOUT_MS: u64 = 5000;
+const DHCP_TIMEOUT_MS: u64 = 10000;
+const DHCP_REST_CONFIGURED_MS: u64 = 10000;
 
 #[derive(Clone)]
 pub struct Interface {
     name: String,
     dhcp_running: Arc<AtomicBool>,
+    ip: Arc<Mutex<String>>,
 }
 
 impl Hash for Interface {
@@ -49,6 +51,7 @@ impl Interface {
         Interface {
             name: name.to_owned(),
             dhcp_running: Arc::new(AtomicBool::new(false)),
+            ip: Arc::new(Mutex::new(String::new())),
         }
     }
 
@@ -80,6 +83,7 @@ impl Interface {
     }
 
     pub fn down(&self) {
+        self.ip.lock().unwrap().clear();
         if self.valid() {
             support::run(&format!("ip l set {} down", self.name), false);
         }
@@ -130,21 +134,29 @@ impl Interface {
 
         let mut sockets = SocketSet::new(vec![]);
         let dhcp_rx_buffer = RawSocketBuffer::new([RawPacketMetadata::EMPTY; 1], vec![0; 900]);
-        let dhcp_tx_buffer = RawSocketBuffer::new([RawPacketMetadata::EMPTY; 1], vec![0; 300]);
+        let dhcp_tx_buffer = RawSocketBuffer::new([RawPacketMetadata::EMPTY; 1], vec![0; 600]);
 
         let mut dhcp =
             Dhcpv4Client::new(&mut sockets, dhcp_rx_buffer, dhcp_tx_buffer, Instant::now());
-
-        let delay = Duration::from_millis(DHCP_POLL_INTERVAL_MS);
+        let rest = time::Duration::from_millis(DHCP_REST_CONFIGURED_MS);
         while runflag.load(Ordering::SeqCst) {
             let timestamp = Instant::now();
-
             if iface.poll(&mut sockets, timestamp).is_ok() {
                 if let Ok(config) = dhcp.poll(&mut iface, &mut sockets, timestamp) {
                     if let Some(config) = config {
                         config.address.map(|addr| {
-                            *ip.lock().unwrap() = addr.address().to_string();
-                            support::run(&format!("ip addr add {} dev {}", addr, ifname), false);
+                            let new_ip = addr.address().to_string();
+                            if new_ip != "0.0.0.0" {
+                                let mut ip_locked = ip.lock().unwrap();
+                                if *ip_locked != new_ip {
+                                    *ip_locked = new_ip;
+                                    support::run(&format!("ip addr flush dev {}", ifname), false);
+                                    support::run(
+                                        &format!("ip addr add {} dev {}", addr, ifname),
+                                        false,
+                                    );
+                                }
+                            }
                         });
 
                         config.router.map(|route| {
@@ -164,10 +176,12 @@ impl Interface {
                             }
                         }
                     }
-
-                    wait(fd, Some(delay)).unwrap_or(());
                 }
             }
+            if !ip.lock().unwrap().is_empty() {
+                thread::sleep(rest);
+            }
+            wait(fd, None).unwrap_or(());
         }
     }
 
@@ -176,20 +190,19 @@ impl Interface {
             return Err(());
         }
         let mac = self.detect_mac().expect("cannot detect HW addr");
-        let ip = Arc::new(Mutex::new(String::new()));
-        let rip = ip.clone();
+        let ip = self.ip.clone();
         let name = self.name.clone();
         let runflag = self.dhcp_running.clone();
         runflag.store(true, Ordering::SeqCst);
         thread::spawn(move || {
-            Interface::dhcp_process(&name, mac, runflag, rip);
+            Interface::dhcp_process(&name, mac, runflag, ip);
         });
 
         let mut tries = 0;
         let max_tries = DHCP_TIMEOUT_MS / DHCP_POLL_INTERVAL_MS;
         while tries < max_tries {
             thread::sleep(time::Duration::from_millis(DHCP_POLL_INTERVAL_MS));
-            let result = ip.lock().unwrap().clone();
+            let result = self.ip.lock().unwrap().clone();
             if !result.is_empty() {
                 return Ok(result);
             }
