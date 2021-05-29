@@ -109,20 +109,15 @@ class snm_proxy : public DBus::InterfaceProxy {
         DBus::MessageIter ri = ret.reader();
 
         ConnectionProps result;
-        bool enc;
-        bool roaming;
-        int32_t to;
-        std::string password;
-        ri >> password;
-        ri >> to;
-        ri >> result.auto_connect;
-        ri >> enc;
-        ri >> roaming;
-        if (enc) {
-            result.password = password;
+        DBus::Struct<std::string, int32_t, bool, bool, bool> temp;
+        ri >> temp;
+
+        result.auto_connect = temp._3;
+        if (temp._4) {
+            result.password = temp._1;
         }
-        if (roaming) {
-            result.threshold = to;
+        if (temp._5) {
+            result.threshold = temp._2;
         }
         return result;
     }
