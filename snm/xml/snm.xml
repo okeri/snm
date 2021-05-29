@@ -20,11 +20,7 @@
     </signal>
     <method name="get_props">
       <arg type="s" direction="in" name="essid"/>
-      <arg type="s" direction="out" name="password"/>
-      <arg type="i" direction="out" name="threshold"/>
-      <arg type="b" direction="out" name="auto_connect"/>
-      <arg type="b" direction="out" name="encryption"/>
-      <arg type="b" direction="out" name="roaming"/>
+      <arg type="(sibbb)" direction="out" name="network"/>
     </method>
     <method name="set_props">
       <arg type="s" direction="in" name="essid"/>

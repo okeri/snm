@@ -1,17 +1,14 @@
 use rustbus::{
-    params::Base,
-    params::{message::Message, Param},
+    message_builder::MarshalledMessage,
+    params::{message::Message, Base, Param},
 };
 
 use std::collections::HashSet;
-use std::sync::{
-    atomic::{AtomicU32, Ordering},
-    Arc,
-};
+use std::sync::{Arc, Mutex};
 
+#[derive(Clone)]
 pub struct ProxyTracker {
-    proxies: HashSet<String>,
-    count: Arc<AtomicU32>,
+    proxies: Arc<Mutex<HashSet<String>>>,
 }
 
 fn to_string(param: &Param) -> Option<String> {
@@ -26,19 +23,18 @@ fn to_string(param: &Param) -> Option<String> {
 impl ProxyTracker {
     pub fn new() -> Self {
         ProxyTracker {
-            proxies: HashSet::new(),
-            count: Arc::new(AtomicU32::new(0)),
+            proxies: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
-    pub fn start_track(&mut self, msg: &Message) {
+    pub fn start_track(&mut self, msg: &MarshalledMessage) {
         if let Some(ref sender) = msg.dynheader.sender {
-            self.proxies.insert(sender.to_owned());
-            self.count.fetch_add(1, Ordering::SeqCst);
+            let mut proxies = self.proxies.lock().unwrap();
+            proxies.insert(sender.to_owned());
         }
     }
 
-    pub fn event(&mut self, msg: &Message) {
+    pub fn event<'a, 'e>(&mut self, msg: Message<'a, 'e>) {
         if msg
             .dynheader
             .member
@@ -48,9 +44,8 @@ impl ProxyTracker {
                 if let Some(value) = to_string(&msg.params[2]) {
                     if value == "" {
                         if let Some(sender) = to_string(&msg.params[0]) {
-                            if self.proxies.remove(&sender) {
-                                self.count.fetch_sub(1, Ordering::SeqCst);
-                            }
+                            let mut proxies = self.proxies.lock().unwrap();
+                            proxies.remove(&sender);
                         }
                     }
                 }
@@ -58,7 +53,7 @@ impl ProxyTracker {
         }
     }
 
-    pub fn active_proxies_counter(&self) -> Arc<AtomicU32> {
-        self.count.clone()
+    pub fn active(&self) -> usize {
+        self.proxies.lock().unwrap().len()
     }
 }

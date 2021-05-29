@@ -1,4 +1,5 @@
 use super::connection::{ConnectionSetting, KnownNetwork};
+use rustbus::message_builder::MarshalledMessage;
 use rustbus::params::{Base, Container, Param};
 use std::convert::TryFrom;
 
@@ -77,6 +78,8 @@ impl Convert for (String, KnownNetwork) {
     }
 }
 
-pub fn convert<T: Convert>(p: &Vec<Param>) -> Result<T, ()> {
-    T::from_params(p)
+pub fn convert<T: Convert>(msg: MarshalledMessage) -> Result<T, ()> {
+    msg.unmarshall_all()
+        .map_err(|_| ())
+        .and_then(|m| T::from_params(&m.params))
 }

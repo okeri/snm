@@ -22,10 +22,7 @@ const LONG_INTERVAL: u32 = 1800;
 const ROAMING_DB_PATH: &str = "/etc/snm/roaming.db";
 
 #[derive(Clone)]
-pub struct Connection<SignalHandler>
-where
-    SignalHandler: FnMut(SignalMsg),
-{
+pub struct Connection<SignalHandler: FnMut(SignalMsg)> {
     ifaces: Arc<Mutex<Interfaces>>,
     tries: Arc<AtomicUsize>,
     current: Arc<RwLock<ConnectionInfo>>,
@@ -33,10 +30,7 @@ where
     signal_handler: SignalHandler,
 }
 
-impl<SignalHandler> Connection<SignalHandler>
-where
-    SignalHandler: FnMut(SignalMsg),
-{
+impl<SignalHandler: FnMut(SignalMsg)> Connection<SignalHandler> {
     fn wait_for_auth(&self, iface: &Interface) -> bool {
         let mut tries = 0;
         while tries < self.tries.load(Ordering::SeqCst) {

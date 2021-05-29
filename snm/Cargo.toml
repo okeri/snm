@@ -1,6 +1,6 @@
 [package]
 name = "snm"
-version = "0.2.2"
+version = "0.2.3"
 authors = ["Oleg Keri <ezhi99@gmail.com>"]
 edition = "2018"
 
@@ -11,6 +11,6 @@ regex = "1.0.0"
 serde_derive = "0.8.23"
 toml = { version = "0.2", default-features = false, features = ["serde"] }
 smoltcp = { version = "*", features = ["proto-dhcpv4"] }
-rustbus = { git = "https://github.com/KillingSpark/rustbus", branch = "dispatch_conn" }
+rustbus = { git = "https://github.com/KillingSpark/rustbus" }
 nix = "0.17.0"
 ring = "*"

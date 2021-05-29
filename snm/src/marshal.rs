@@ -6,15 +6,18 @@ use rustbus::{
     Error, Marshal, Signature,
 };
 
-impl Signature for ConnectionInfo {
+impl Signature for &ConnectionInfo {
     fn signature() -> signature::Type {
-        signature::Type::Container(signature::Container::Struct(vec![
-            u32::signature(),
-            String::signature(),
-            bool::signature(),
-            u32::signature(),
-            String::signature(),
-        ]))
+        signature::Type::Container(signature::Container::Struct(
+            signature::StructTypes::new(vec![
+                u32::signature(),
+                String::signature(),
+                bool::signature(),
+                u32::signature(),
+                String::signature(),
+            ])
+            .unwrap(),
+        ))
     }
 
     fn alignment() -> usize {
@@ -22,7 +25,7 @@ impl Signature for ConnectionInfo {
     }
 }
 
-impl Marshal for ConnectionInfo {
+impl Marshal for &ConnectionInfo {
     fn marshal(&self, ctx: &mut MarshalContext) -> Result<(), Error> {
         ctx.align_to(Self::alignment());
         match self {
@@ -66,15 +69,18 @@ impl Marshal for ConnectionInfo {
     }
 }
 
-impl Signature for KnownNetwork {
+impl Signature for &KnownNetwork {
     fn signature() -> signature::Type {
-        signature::Type::Container(signature::Container::Struct(vec![
-            String::signature(),
-            i32::signature(),
-            bool::signature(),
-            bool::signature(),
-            bool::signature(),
-        ]))
+        signature::Type::Container(signature::Container::Struct(
+            signature::StructTypes::new(vec![
+                String::signature(),
+                i32::signature(),
+                bool::signature(),
+                bool::signature(),
+                bool::signature(),
+            ])
+            .unwrap(),
+        ))
     }
 
     fn alignment() -> usize {
@@ -82,7 +88,7 @@ impl Signature for KnownNetwork {
     }
 }
 
-impl Marshal for KnownNetwork {
+impl Marshal for &KnownNetwork {
     fn marshal(&self, ctx: &mut MarshalContext) -> Result<(), Error> {
         ctx.align_to(Self::alignment());
         self.password
@@ -97,14 +103,17 @@ impl Marshal for KnownNetwork {
     }
 }
 
-impl Signature for NetworkInfo {
+impl Signature for &NetworkInfo {
     fn signature() -> signature::Type {
-        signature::Type::Container(signature::Container::Struct(vec![
-            u32::signature(),
-            String::signature(),
-            bool::signature(),
-            u32::signature(),
-        ]))
+        signature::Type::Container(signature::Container::Struct(
+            signature::StructTypes::new(vec![
+                u32::signature(),
+                String::signature(),
+                bool::signature(),
+                u32::signature(),
+            ])
+            .unwrap(),
+        ))
     }
 
     fn alignment() -> usize {
@@ -112,7 +121,7 @@ impl Signature for NetworkInfo {
     }
 }
 
-impl Marshal for NetworkInfo {
+impl Marshal for &NetworkInfo {
     fn marshal(&self, ctx: &mut MarshalContext) -> Result<(), Error> {
         ctx.align_to(Self::alignment());
         match self {
@@ -133,19 +142,19 @@ impl Marshal for NetworkInfo {
     }
 }
 
-impl Signature for NetworkList {
+impl Signature for &NetworkList {
     fn signature() -> signature::Type {
         signature::Type::Container(signature::Container::Array(Box::new(
-            NetworkInfo::signature(),
+            <&NetworkInfo>::signature(),
         )))
     }
 
     fn alignment() -> usize {
-        NetworkInfo::alignment()
+        <&NetworkInfo>::alignment()
     }
 }
 
-impl Marshal for NetworkList {
+impl Marshal for &NetworkList {
     fn marshal(&self, ctx: &mut MarshalContext) -> Result<(), Error> {
         ctx.align_to(4);
         let len_pos = ctx.buf.len();

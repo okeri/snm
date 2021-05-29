@@ -181,9 +181,10 @@ impl Interface {
             if !ip.lock().unwrap().is_empty() {
                 thread::sleep(rest);
             }
-	    let mut timeout = dhcp.next_poll(timestamp);
-            iface.poll_delay(&sockets, timestamp)
-		.map(|sockets_timeout| timeout = sockets_timeout);
+            let mut timeout = dhcp.next_poll(timestamp);
+            iface
+                .poll_delay(&sockets, timestamp)
+                .map(|sockets_timeout| timeout = sockets_timeout);
             wait(fd, Some(timeout)).unwrap_or(());
         }
     }
