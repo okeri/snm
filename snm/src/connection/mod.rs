@@ -28,6 +28,7 @@ pub struct Connection<SignalHandler: FnMut(SignalMsg)> {
     current: Arc<RwLock<ConnectionInfo>>,
     networks: Arc<Mutex<NetworkList>>,
     signal_handler: SignalHandler,
+    wifi_try_hack: u32,
 }
 
 impl<SignalHandler: FnMut(SignalMsg)> Connection<SignalHandler> {
@@ -138,6 +139,7 @@ impl<SignalHandler: FnMut(SignalMsg)> Connection<SignalHandler> {
             current: Arc::new(RwLock::new(ConnectionInfo::NotConnected)),
             networks: Arc::new(Mutex::new(NetworkList::new())),
             signal_handler,
+            wifi_try_hack: 0,
         }
     }
 
@@ -208,6 +210,7 @@ impl<SignalHandler: FnMut(SignalMsg)> Connection<SignalHandler> {
                     ),
                     false,
                 );
+                erase_wpa_config();
                 if !self.wait_for_auth(&iface) {
                     if !self.aborted() {
                         self.signal(SignalMsg::ConnectStatusChanged(if need_auth {
@@ -216,51 +219,33 @@ impl<SignalHandler: FnMut(SignalMsg)> Connection<SignalHandler> {
                             ConnectionStatus::ConnectFail
                         }));
                     }
-                    erase_wpa_config();
                     return false;
                 }
             }
-            if self.dhcp_phase(iface, network).active() {
-                erase_wpa_config();
-                return true;
+            self.signal(SignalMsg::ConnectStatusChanged(ConnectionStatus::GettingIP));
+            if let Ok(ip) = iface.dhcp() {
+                let info = match network {
+                    NetworkInfo::Ethernet => ConnectionInfo::Ethernet(ip),
+                    NetworkInfo::Wifi(essid, signal, enc) => {
+                        ConnectionInfo::Wifi(essid, signal, enc, ip)
+                    }
+                };
+                let result = info.active();
+                self.change_state(info);
+                return result;
             }
-            erase_wpa_config();
         }
         false
     }
 
-    fn dhcp_phase(&mut self, iface: Interface, network: NetworkInfo) -> ConnectionInfo {
-        self.signal(SignalMsg::ConnectStatusChanged(ConnectionStatus::GettingIP));
-        if let Ok(ip) = iface.dhcp() {
-            let info = match network {
-                NetworkInfo::Ethernet => ConnectionInfo::Ethernet(ip),
-                NetworkInfo::Wifi(essid, signal, enc) => {
-                    ConnectionInfo::Wifi(essid, signal, enc, ip)
-                }
-            };
-            self.change_state(info.clone());
-            return info;
-        }
-        ConnectionInfo::NotConnected
-    }
-
     pub fn acquire(&mut self) {
         let mut current = ConnectionInfo::NotConnected;
-        let mut current_iface: Option<Interface> = None;
         if let Ok(mut ifaces) = self.ifaces.lock() {
             ifaces.detect();
             if let Some(eth) = ifaces.eth() {
                 current = eth.eth_info();
-                current_iface = Some(eth);
             } else if let Some(wlan) = ifaces.wlan() {
                 current = wlan.wlan_info();
-                current_iface = Some(wlan);
-            }
-        }
-
-        if current.active() {
-            if let Some(iface) = current_iface {
-                current = self.dhcp_phase(iface, current.into());
             }
         }
 
@@ -291,7 +276,7 @@ impl<SignalHandler: FnMut(SignalMsg)> Connection<SignalHandler> {
         }
 
         let add_phantom_eth = |networks: &mut NetworkList| {
-            if networks.len() == 0 || !networks[0].is_eth() {
+            if networks.is_empty() || !networks[0].is_eth() {
                 networks.insert(0, NetworkInfo::Ethernet);
                 true
             } else {
@@ -343,10 +328,18 @@ impl<SignalHandler: FnMut(SignalMsg)> Connection<SignalHandler> {
                     }
                     return CouldConnect::Connect(ConnectionSetting::Ethernet);
                 } else if !wifi_plugged_in {
-                    let networks = empty_networks(false);
-                    self.signal(SignalMsg::NetworkList(networks.clone()));
-                    *self.networks.lock().unwrap() = networks;
-                    return CouldConnect::Disconnect;
+                    // Do not eliminate connection,
+                    // let's give wpa_supplicant a chance to restore
+                    if self.wifi_try_hack > 2 {
+                        self.wifi_try_hack = 0;
+                        let networks = empty_networks(false);
+                        self.signal(SignalMsg::NetworkList(networks.clone()));
+                        *self.networks.lock().unwrap() = networks;
+                        return CouldConnect::Disconnect;
+                    }
+                    self.wifi_try_hack += 1;
+                } else {
+                    self.wifi_try_hack = 0;
                 }
             }
 

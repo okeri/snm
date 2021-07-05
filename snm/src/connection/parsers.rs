@@ -2,6 +2,7 @@ use regex::{Captures, Regex};
 
 pub enum Parsers {
     WpaState,
+    Ip,
     NetworkQuality,
     NetworkEnc,
     NetworkEssid,
@@ -10,6 +11,7 @@ pub enum Parsers {
 lazy_static! {
     static ref PARSERS: Vec<Regex> = vec![
         Regex::new(r".*wpa_state=(.*?)\n").unwrap(),
+        Regex::new(r".*leased[^\d]?(.*)?[^ ]* for").unwrap(),
         Regex::new(r".*signal: ([^\.]+)\.").unwrap(),
         Regex::new(r".*capability: ([^\n]*)\n").unwrap(),
         Regex::new(r".*SSID: ([^\n]*)\n").unwrap()
