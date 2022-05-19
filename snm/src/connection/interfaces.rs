@@ -145,7 +145,7 @@ impl Interface {
                 None => {}
                 Some(Dhcpv4Event::Configured(config)) => {
                     if let Some(router) = config.router {
-                        support::run(&format!("ip route add {} dev {}", router, ifname), false);
+                        support::run(&format!("ip route add {} dev {}", config.address.network(), ifname), false);
                         support::run(
                             &format!("ip route add default via {} dev {}", router, ifname),
                             false,
