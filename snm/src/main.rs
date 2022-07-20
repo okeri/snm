@@ -59,15 +59,15 @@ fn main() -> Result<(), Error> {
         signal.log();
         match signal {
             SignalMsg::StateChanged(state) => {
-                emitter.emit("state_changed", &state).unwrap();
+                emitter.emit("state_changed", &state).unwrap_or_default();
             }
             SignalMsg::ConnectStatusChanged(status) => {
                 emitter
                     .emit("connect_status_changed", status as u32)
-                    .unwrap();
+                    .unwrap_or_default();
             }
             SignalMsg::NetworkList(networks) => {
-                emitter.emit("network_list", &networks).unwrap();
+                emitter.emit("network_list", &networks).unwrap_or_default();
             }
         }
     };

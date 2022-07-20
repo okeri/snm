@@ -20,8 +20,8 @@ use std::{
     thread, time,
 };
 
-const DHCP_POLL_INTERVAL_MS: u64 = 500;
-const DHCP_TIMEOUT_MS: u64 = 12000;
+const DHCP_POLL_INTERVAL_MS: u64 = 100;
+const DHCP_TIMEOUT_MS: u64 = 10000;
 
 #[derive(Clone)]
 pub struct Interface {
@@ -145,7 +145,10 @@ impl Interface {
                 None => {}
                 Some(Dhcpv4Event::Configured(config)) => {
                     if let Some(router) = config.router {
-                        support::run(&format!("ip route add {} dev {}", config.address.network(), ifname), false);
+                        support::run(
+                            &format!("ip route add {} dev {}", config.address.network(), ifname),
+                            false,
+                        );
                         support::run(
                             &format!("ip route add default via {} dev {}", router, ifname),
                             false,

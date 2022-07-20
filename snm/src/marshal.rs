@@ -2,8 +2,8 @@ use super::connection::{ConnectionInfo, KnownNetwork, NetworkInfo, NetworkList};
 
 use rustbus::{
     signature,
-    wire::{marshal::MarshalContext, util::insert_u32},
-    Error, Marshal, Signature,
+    wire::{errors::MarshalError as Error, marshal::MarshalContext, util::insert_u32},
+    Marshal, Signature,
 };
 
 impl Signature for &ConnectionInfo {
